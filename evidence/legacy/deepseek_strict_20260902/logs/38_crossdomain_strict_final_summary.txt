@@ -1,0 +1,37 @@
+第二跨场景：DeepSeek真实API + 严格OR-Tools联合验收
+============================================================
+场景                     : ROS2软件仓库故障诊断与安全发布
+Run ID                   : deepseek-crossdomain-rosrepair-strict-004
+主链全部成功             : True
+真实性验证通过           : True
+任务数量                 : 18
+真实API请求数量          : 18
+唯一Request ID数量       : 18
+实际模型                 : deepseek-v4-flash
+调度策略                 : ortools
+仅使用OR-Tools           : True
+不存在调度回退           : True
+Evidence数量             : 18
+Verifier数量             : 18
+低熵消息数量             : 24
+Context Pack数量         : 18
+输入Token总数            : 47122
+输出Token总数            : 16503
+总Token用量              : 63625
+
+真实性检查项：
+
+Check                                    Passed
+-----                                    ------
+all_succeeded                              True
+runtime_agent_mode_deepseek                True
+tool_events_present                        True
+every_tool_event_has_deepseek_provenance   True
+deepseek_agents_registered                 True
+no_mock_resource_or_result                 True
+evidence_for_every_task                    True
+verification_for_every_task                True
+
+
+
+PASS：第二跨场景真实DeepSeek API与严格OR-Tools联合验收全部通过

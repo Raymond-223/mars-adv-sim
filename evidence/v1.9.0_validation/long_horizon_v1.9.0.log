@@ -1,0 +1,10 @@
+=== [MOSAIC-Ω Single-Run Long-Horizon Benchmark] target events >= 1000; DAG=16x4 ===
+
+=== Summary ===
+Run ID               : bench-long-monolithic-001
+Measured events      : 1153 (target reached=True)
+Measured tasks       : 64 / succeeded=64
+Evidence recovery    : injected=True recovered=True
+Measured messages    : 67
+Estimated token eq.  : 48035 [ESTIMATE, not API billing tokens]
+Saved                : /mnt/data/mosaic_work/MOSAIC-Omega-V3-XH202631-Product-First-v1.9.0/evidence/v1.9.0_validation/long_horizon_v1.9.0.json

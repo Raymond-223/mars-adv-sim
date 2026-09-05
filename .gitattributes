@@ -1,0 +1,13 @@
+# The Windows launcher is double-clicked by end users, so it must be checked
+# out with CRLF on every platform (tests/unit/test_v171_regressions.py asserts
+# this). Stored as LF, converted on checkout.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts must keep LF even when checked out on Windows.
+*.sh text eol=lf
+
+# Binary assets: never apply line-ending conversion.
+*.pdf binary
+*.png binary
+*.zip binary

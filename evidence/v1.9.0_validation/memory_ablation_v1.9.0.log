@@ -1,0 +1,72 @@
+{
+  "study_name": "MOSAIC-Ω memory controlled ablation",
+  "measurement_mode": "production ContextBuilder + tokenizer-free estimated token budget; no provider API",
+  "timestamp": "2026-09-05 09:15:04",
+  "controlled_variables": {
+    "same_final_task_prompt": true,
+    "same_key_facts": [
+      "最终交付必须包含 evidence SHA256",
+      "禁止把估算 token 冒充真实 API token",
+      "restricted 数据不得离开 DEVICE",
+      "Agent 自报完成不能作为最终验收"
+    ],
+    "synthetic_history_steps": 180,
+    "context_pack_limits": {
+      "max_chars": 6000,
+      "max_tokens": 2200,
+      "recall_limit": 18
+    }
+  },
+  "modes": {
+    "no_memory": {
+      "estimated_tokens": 20,
+      "estimated_chars": 40,
+      "provider_api_input_tokens": null,
+      "provider_api_token_measurement": "not_measured_no_provider_call",
+      "key_fact_hits": 0,
+      "key_fact_total": 4,
+      "key_fact_recall_pct": 0.0,
+      "recalled_facts": []
+    },
+    "full_history": {
+      "estimated_tokens": 7808,
+      "estimated_chars": 15616,
+      "provider_api_input_tokens": null,
+      "provider_api_token_measurement": "not_measured_no_provider_call",
+      "key_fact_hits": 4,
+      "key_fact_total": 4,
+      "key_fact_recall_pct": 100.0,
+      "recalled_facts": [
+        "最终交付必须包含 evidence SHA256",
+        "禁止把估算 token 冒充真实 API token",
+        "restricted 数据不得离开 DEVICE",
+        "Agent 自报完成不能作为最终验收"
+      ]
+    },
+    "context_pack": {
+      "estimated_tokens": 721,
+      "estimated_chars": 1441,
+      "provider_api_input_tokens": null,
+      "provider_api_token_measurement": "not_measured_no_provider_call",
+      "key_fact_hits": 4,
+      "key_fact_total": 4,
+      "key_fact_recall_pct": 100.0,
+      "recalled_facts": [
+        "最终交付必须包含 evidence SHA256",
+        "禁止把估算 token 冒充真实 API token",
+        "restricted 数据不得离开 DEVICE",
+        "Agent 自报完成不能作为最终验收"
+      ],
+      "context_builder_runtime_ms_measured": 0.5175,
+      "context_pack_truncated": true,
+      "memory_ids_selected": 18
+    }
+  },
+  "context_reduction_vs_full_history_pct_estimated": 90.77,
+  "truth_notes": [
+    "estimated_tokens uses mosaic_omega.memory_recovery.context_builder.estimate_tokens; it is not tokenizer/provider billing data.",
+    "provider_api_input_tokens is null because this controlled experiment makes no provider API request.",
+    "Key-fact recall is an exact-string deterministic check over the same four required facts.",
+    "Full History and ContextPack are compared on the same final task prompt and same generated history fixture."
+  ]
+}

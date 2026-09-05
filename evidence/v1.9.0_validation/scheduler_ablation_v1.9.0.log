@@ -1,0 +1,351 @@
+{
+  "study_name": "MOSAIC-Ω scheduler controlled ablation",
+  "measurement_mode": "production Scheduler + CostModel; assignment-only controlled benchmark",
+  "timestamp": "2026-09-05 09:15:05",
+  "controlled_variables": {
+    "same_tasks": true,
+    "same_capability_registry": true,
+    "same_cost_weights": true,
+    "same_device_capacities": true,
+    "task_count": 6
+  },
+  "modes": {
+    "round_robin": {
+      "policy": "round_robin",
+      "available": true,
+      "assignment_count": 6,
+      "unassigned_count": 0,
+      "scheduler_runtime_ms_measured": 4.1156,
+      "scheduler_objective_total_cost": 2.7534,
+      "scheduler_objective_avg_cost": 0.4589,
+      "device_assignment_counts": {
+        "cloud-node": 2,
+        "dev-local": 2,
+        "edge-node": 2
+      },
+      "load_balance_stddev_assignments": 0.0,
+      "predicted_execution_makespan_ms_model": 82.0,
+      "assignments": [
+        {
+          "task_id": "T1-realtime",
+          "agent_id": "agent-edge",
+          "resource_id": "dev-local",
+          "actual_execution_tier": "edge",
+          "recommended_tier": "edge",
+          "total_cost": 0.3445,
+          "cost_breakdown": {
+            "fixed": 0.17,
+            "latency": 0.034,
+            "token": 0.003,
+            "energy": 0.05,
+            "failure": 0.0875,
+            "migration": 0.0,
+            "load": 0.0
+          },
+          "reason": "eligible bundle on dev-local; cost=0.3445; recommended_tier=edge; actual_tier=edge; placement_fallback=false; partition_recommendation=feature_offload; hard privacy/permission/location filters passed",
+          "solver_provenance": {
+            "engine": "mosaic_builtin",
+            "algorithm": "round_robin",
+            "status": "SELECTED"
+          },
+          "predicted_bundle_latency_ms_model": 34.0
+        },
+        {
+          "task_id": "T2-private",
+          "agent_id": "agent-device",
+          "resource_id": "edge-node",
+          "actual_execution_tier": "device",
+          "recommended_tier": "device",
+          "total_cost": 0.3501,
+          "cost_breakdown": {
+            "fixed": 0.17,
+            "latency": 0.028,
+            "token": 0.0096,
+            "energy": 0.03,
+            "failure": 0.1125,
+            "migration": 0.0,
+            "load": 0.0
+          },
+          "reason": "eligible bundle on edge-node; cost=0.3501; recommended_tier=device; actual_tier=device; placement_fallback=false; partition_recommendation=none; hard privacy/permission/location filters passed",
+          "solver_provenance": {
+            "engine": "mosaic_builtin",
+            "algorithm": "round_robin",
+            "status": "SELECTED"
+          },
+          "predicted_bundle_latency_ms_model": 28.0
+        },
+        {
+          "task_id": "T3-heavy",
+          "agent_id": "agent-cloud",
+          "resource_id": "cloud-node",
+          "actual_execution_tier": "cloud",
+          "recommended_tier": "cloud",
+          "total_cost": 0.6426,
+          "cost_breakdown": {
+            "fixed": 0.37,
+            "latency": 0.082,
+            "token": 0.1406,
+            "energy": 0.01,
+            "failure": 0.04,
+            "migration": 0.0,
+            "load": 0.0
+          },
+          "reason": "eligible bundle on cloud-node; cost=0.6426; recommended_tier=cloud; actual_tier=cloud; placement_fallback=false; partition_recommendation=pipeline_split; hard privacy/permission/location filters passed",
+          "solver_provenance": {
+            "engine": "mosaic_builtin",
+            "algorithm": "round_robin",
+            "status": "SELECTED"
+          },
+          "predicted_bundle_latency_ms_model": 82.0
+        },
+        {
+          "task_id": "T4-medium",
+          "agent_id": "agent-edge",
+          "resource_id": "dev-local",
+          "actual_execution_tier": "edge",
+          "recommended_tier": "edge",
+          "total_cost": 0.3715,
+          "cost_breakdown": {
+            "fixed": 0.17,
+            "latency": 0.034,
+            "token": 0.03,
+            "energy": 0.05,
+            "failure": 0.0875,
+            "migration": 0.0,
+            "load": 0.0
+          },
+          "reason": "eligible bundle on dev-local; cost=0.3715; recommended_tier=edge; actual_tier=edge; placement_fallback=false; partition_recommendation=none; hard privacy/permission/location filters passed",
+          "solver_provenance": {
+            "engine": "mosaic_builtin",
+            "algorithm": "round_robin",
+            "status": "SELECTED"
+          },
+          "predicted_bundle_latency_ms_model": 34.0
+        },
+        {
+          "task_id": "T5-light",
+          "agent_id": "agent-device",
+          "resource_id": "edge-node",
+          "actual_execution_tier": "device",
+          "recommended_tier": "device",
+          "total_cost": 0.3429,
+          "cost_breakdown": {
+            "fixed": 0.17,
+            "latency": 0.028,
+            "token": 0.0024,
+            "energy": 0.03,
+            "failure": 0.1125,
+            "migration": 0.0,
+            "load": 0.0
+          },
+          "reason": "eligible bundle on edge-node; cost=0.3429; recommended_tier=device; actual_tier=device; placement_fallback=false; partition_recommendation=none; hard privacy/permission/location filters passed",
+          "solver_provenance": {
+            "engine": "mosaic_builtin",
+            "algorithm": "round_robin",
+            "status": "SELECTED"
+          },
+          "predicted_bundle_latency_ms_model": 28.0
+        },
+        {
+          "task_id": "T6-heavy",
+          "agent_id": "agent-cloud",
+          "resource_id": "cloud-node",
+          "actual_execution_tier": "cloud",
+          "recommended_tier": "cloud",
+          "total_cost": 0.7018,
+          "cost_breakdown": {
+            "fixed": 0.37,
+            "latency": 0.082,
+            "token": 0.1998,
+            "energy": 0.01,
+            "failure": 0.04,
+            "migration": 0.0,
+            "load": 0.0
+          },
+          "reason": "eligible bundle on cloud-node; cost=0.7018; recommended_tier=cloud; actual_tier=cloud; placement_fallback=false; partition_recommendation=pipeline_split; hard privacy/permission/location filters passed",
+          "solver_provenance": {
+            "engine": "mosaic_builtin",
+            "algorithm": "round_robin",
+            "status": "SELECTED"
+          },
+          "predicted_bundle_latency_ms_model": 82.0
+        }
+      ]
+    },
+    "greedy": {
+      "policy": "greedy",
+      "available": true,
+      "assignment_count": 6,
+      "unassigned_count": 0,
+      "scheduler_runtime_ms_measured": 3.9161,
+      "scheduler_objective_total_cost": 2.75936,
+      "scheduler_objective_avg_cost": 0.459893,
+      "device_assignment_counts": {
+        "cloud-node": 2,
+        "dev-local": 2,
+        "edge-node": 2
+      },
+      "load_balance_stddev_assignments": 0.0,
+      "predicted_execution_makespan_ms_model": 82.0,
+      "assignments": [
+        {
+          "task_id": "T1-realtime",
+          "agent_id": "agent-device",
+          "resource_id": "edge-node",
+          "actual_execution_tier": "device",
+          "recommended_tier": "device",
+          "total_cost": 0.3441,
+          "cost_breakdown": {
+            "fixed": 0.17,
+            "latency": 0.028,
+            "token": 0.0036,
+            "energy": 0.03,
+            "failure": 0.1125,
+            "migration": 0.0,
+            "load": 0.0
+          },
+          "reason": "eligible bundle on edge-node; cost=0.3441; recommended_tier=device; actual_tier=device; placement_fallback=false; partition_recommendation=feature_offload; hard privacy/permission/location filters passed",
+          "solver_provenance": {
+            "engine": "mosaic_builtin",
+            "algorithm": "greedy",
+            "status": "SELECTED"
+          },
+          "predicted_bundle_latency_ms_model": 28.0
+        },
+        {
+          "task_id": "T2-private",
+          "agent_id": "agent-edge",
+          "resource_id": "dev-local",
+          "actual_execution_tier": "edge",
+          "recommended_tier": "edge",
+          "total_cost": 0.3495,
+          "cost_breakdown": {
+            "fixed": 0.17,
+            "latency": 0.034,
+            "token": 0.008,
+            "energy": 0.05,
+            "failure": 0.0875,
+            "migration": 0.0,
+            "load": 0.0
+          },
+          "reason": "eligible bundle on dev-local; cost=0.3495; recommended_tier=edge; actual_tier=edge; placement_fallback=false; partition_recommendation=none; hard privacy/permission/location filters passed",
+          "solver_provenance": {
+            "engine": "mosaic_builtin",
+            "algorithm": "greedy",
+            "status": "SELECTED"
+          },
+          "predicted_bundle_latency_ms_model": 34.0
+        },
+        {
+          "task_id": "T3-heavy",
+          "agent_id": "agent-cloud",
+          "resource_id": "dev-local",
+          "actual_execution_tier": "cloud",
+          "recommended_tier": "cloud",
+          "total_cost": 0.552,
+          "cost_breakdown": {
+            "fixed": 0.25,
+            "latency": 0.082,
+            "token": 0.095,
+            "energy": 0.05,
+            "failure": 0.075,
+            "migration": 0.0,
+            "load": 0.0
+          },
+          "reason": "eligible bundle on dev-local; cost=0.5520; recommended_tier=cloud; actual_tier=cloud; placement_fallback=false; partition_recommendation=pipeline_split; hard privacy/permission/location filters passed",
+          "solver_provenance": {
+            "engine": "mosaic_builtin",
+            "algorithm": "greedy",
+            "status": "SELECTED"
+          },
+          "predicted_bundle_latency_ms_model": 82.0
+        },
+        {
+          "task_id": "T4-medium",
+          "agent_id": "agent-device",
+          "resource_id": "edge-node",
+          "actual_execution_tier": "device",
+          "recommended_tier": "device",
+          "total_cost": 0.3765,
+          "cost_breakdown": {
+            "fixed": 0.17,
+            "latency": 0.028,
+            "token": 0.036,
+            "energy": 0.03,
+            "failure": 0.1125,
+            "migration": 0.0,
+            "load": 0.0
+          },
+          "reason": "eligible bundle on edge-node; cost=0.3765; recommended_tier=device; actual_tier=device; placement_fallback=false; partition_recommendation=none; hard privacy/permission/location filters passed",
+          "solver_provenance": {
+            "engine": "mosaic_builtin",
+            "algorithm": "greedy",
+            "status": "SELECTED"
+          },
+          "predicted_bundle_latency_ms_model": 28.0
+        },
+        {
+          "task_id": "T5-light",
+          "agent_id": "agent-device",
+          "resource_id": "cloud-node",
+          "actual_execution_tier": "device",
+          "recommended_tier": "device",
+          "total_cost": 0.43546,
+          "cost_breakdown": {
+            "fixed": 0.25,
+            "latency": 0.07,
+            "token": 0.00296,
+            "energy": 0.01,
+            "failure": 0.1025,
+            "migration": 0.0,
+            "load": 0.0
+          },
+          "reason": "eligible bundle on cloud-node; cost=0.4355; recommended_tier=device; actual_tier=device; placement_fallback=false; partition_recommendation=none; hard privacy/permission/location filters passed",
+          "solver_provenance": {
+            "engine": "mosaic_builtin",
+            "algorithm": "greedy",
+            "status": "SELECTED"
+          },
+          "predicted_bundle_latency_ms_model": 70.0
+        },
+        {
+          "task_id": "T6-heavy",
+          "agent_id": "agent-cloud",
+          "resource_id": "cloud-node",
+          "actual_execution_tier": "cloud",
+          "recommended_tier": "cloud",
+          "total_cost": 0.7018,
+          "cost_breakdown": {
+            "fixed": 0.37,
+            "latency": 0.082,
+            "token": 0.1998,
+            "energy": 0.01,
+            "failure": 0.04,
+            "migration": 0.0,
+            "load": 0.0
+          },
+          "reason": "eligible bundle on cloud-node; cost=0.7018; recommended_tier=cloud; actual_tier=cloud; placement_fallback=false; partition_recommendation=pipeline_split; hard privacy/permission/location filters passed",
+          "solver_provenance": {
+            "engine": "mosaic_builtin",
+            "algorithm": "greedy",
+            "status": "SELECTED"
+          },
+          "predicted_bundle_latency_ms_model": 82.0
+        }
+      ]
+    },
+    "ortools": {
+      "policy": "ortools",
+      "available": false,
+      "reason": "Python package 'ortools' is not installed in this runtime; no fallback result is relabeled as OR-Tools.",
+      "assignments": []
+    }
+  },
+  "best_available_policy_by_scheduler_objective": "round_robin",
+  "truth_notes": [
+    "scheduler_runtime_ms_measured is wall-clock time spent making assignments, not end-to-end task latency.",
+    "predicted_execution_makespan_ms_model is derived from registered profile latency, not a measured task execution time.",
+    "No LLM/provider API is called by this benchmark.",
+    "OR-Tools is reported unavailable when the dependency is missing; no fallback is presented as an OR-Tools result."
+  ]
+}

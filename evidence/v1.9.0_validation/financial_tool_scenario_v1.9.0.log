@@ -1,0 +1,15 @@
+{
+  "scenario": "financial_research",
+  "run_id": "v190-financial-tool-001",
+  "agent_mode": "tool",
+  "live_control": false,
+  "live_injections_applied": 0,
+  "all_succeeded": true,
+  "task_count": 6,
+  "event_count": 87,
+  "evidence_count": 6,
+  "scheduler_policies": [
+    "greedy"
+  ],
+  "output": "/mnt/data/mosaic_work/MOSAIC-Omega-V3-XH202631-Product-First-v1.9.0/evidence/v1.9.0_validation/financial_tool_scenario_v1.9.0.json"
+}

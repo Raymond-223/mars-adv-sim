@@ -1,0 +1,69 @@
+{
+  "audit": "MOSAIC-Ω v1.9.0 release package static audit",
+  "timestamp": "2026-09-05 09:45:41",
+  "passed": 12,
+  "total": 12,
+  "all_passed": true,
+  "checks": [
+    {
+      "name": "python_ast_all_files",
+      "passed": true,
+      "detail": "files=197 errors=[]"
+    },
+    {
+      "name": "javascript_syntax",
+      "passed": true,
+      "detail": "files=1 errors=[]"
+    },
+    {
+      "name": "no_cache_vcs_venv_bytecode",
+      "passed": true,
+      "detail": "{'dirs': [], 'bytecode': []}"
+    },
+    {
+      "name": "no_real_env_file",
+      "passed": true,
+      "detail": "[]"
+    },
+    {
+      "name": "no_obvious_api_secret",
+      "passed": true,
+      "detail": "[]"
+    },
+    {
+      "name": "production_src_has_no_mock_agent_module",
+      "passed": true,
+      "detail": "[]"
+    },
+    {
+      "name": "no_stale_prefusion_pdf",
+      "passed": true,
+      "detail": "[]"
+    },
+    {
+      "name": "no_stale_pre_v190_current_evidence",
+      "passed": true,
+      "detail": "[]"
+    },
+    {
+      "name": "no_stale_pre_v190_current_results",
+      "passed": true,
+      "detail": "[]"
+    },
+    {
+      "name": "no_v171_release_summary",
+      "passed": true,
+      "detail": "[]"
+    },
+    {
+      "name": "current_benchmark_results_present",
+      "passed": true,
+      "detail": "['benchmark_1000_events_v3_monolithic.json', 'memory_ablation_v1.9.0.json', 'scheduler_ablation_v1.9.0.json', 'split_inference_reference_v1.9.0.json', 'topology_ablation_v1.9.0.json']"
+    },
+    {
+      "name": "current_final_acceptance_is_v190",
+      "passed": true,
+      "detail": "FINAL_ACCEPTANCE.json"
+    }
+  ]
+}

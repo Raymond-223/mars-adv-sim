@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "source_run_id": "v190-ros-tool-001",
+  "source_execution_verdict": "CONCRETE_TOOL_EXECUTION_VERIFIED",
+  "viewports": [
+    "1280x720",
+    "1366x768",
+    "1920x1080"
+  ],
+  "surfaces_per_viewport": 14,
+  "total_surface_checks": 42,
+  "overflow_failures": [],
+  "runtime_error_failures": [],
+  "output": "/mnt/data/mosaic_work/MOSAIC-Omega-V3-XH202631-Product-First-v1.9.0/evidence/v1.9.0_validation/ui_layout_audit_v1.9.0.json"
+}

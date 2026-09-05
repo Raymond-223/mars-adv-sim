@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>MOSAIC-Ω</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">Ω</div>
+        <div class="brand-copy"><strong>MOSAIC-Ω</strong><span>Autonomous Work</span></div>
+      </div>
+
+      <nav id="nav" class="nav">
+        <div class="nav-label">工作</div>
+        <button type="button" class="nav-item active" data-view="workspace"><span class="nav-icon">⌂</span><span>工作台</span></button>
+        <button type="button" class="nav-item" data-view="tasks"><span class="nav-icon">▣</span><span>任务</span></button>
+        <button type="button" class="nav-item" data-view="deliverables"><span class="nav-icon">▤</span><span>结果</span></button>
+        <button type="button" class="nav-item" data-view="agents"><span class="nav-icon">◇</span><span>智能体</span></button>
+
+        <div class="nav-label nav-label-gap">更多</div>
+        <button type="button" class="nav-item judge-entry" data-view="judge"><span class="nav-icon">⌘</span><span class="judge-entry-copy"><strong>技术透视</strong><small>DAG · 调度 · 协作 · 证据</small></span></button>
+        <button type="button" class="nav-item" data-view="settings"><span class="nav-icon">⚙</span><span>设置</span></button>
+        <button type="button" class="compat-hidden" data-view="observatory" aria-hidden="true" tabindex="-1">技术观测兼容入口</button>
+        <button type="button" class="compat-hidden" data-view="lineage" aria-hidden="true" tabindex="-1">数据血缘兼容入口</button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="mode-pill">INTERACTIVE · TRACEABLE</div>
+        <div id="sidebarStatus" class="sidebar-status"><span class="status-dot idle"></span>等待系统</div>
+        <div id="lastUpdate" class="sidebar-time">尚未读取数据</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <div id="pageEyebrow" class="eyebrow">AUTONOMOUS WORKSPACE</div>
+          <h1 id="pageTitle">工作台</h1>
+        </div>
+        <div class="topbar-right">
+          <div class="run-switcher">
+            <span>运行</span>
+            <select id="runSelector" aria-label="选择运行"></select>
+          </div>
+          <button type="button" id="refreshBtn" class="icon-button" title="刷新">↻</button>
+          <button type="button" id="pauseBtn" class="ghost-button">暂停刷新</button>
+          <button type="button" id="judgeModeBtn" class="judge-button">技术透视</button>
+        </div>
+      </header>
+
+      <div id="toast" class="toast hidden"></div>
+
+      <div id="waiting" class="waiting-banner hidden">
+        <div class="waiting-orb"><span></span></div>
+        <div><strong>还没有运行快照</strong><p>等待动画只表示前端正在等待运行快照，不表示 Agent 正在推理。可以先在工作台提交任务。</p></div>
+      </div>
+
+      <section id="view-workspace" class="view active">
+        <div class="workspace-grid">
+          <div class="workspace-primary">
+            <article class="composer">
+              <div class="composer-topline"><span class="product-badge">MOSAIC Ω</span><span id="providerMini" class="soft-status">模型服务未配置</span></div>
+              <h2>让真实 API Agent 团队完成复杂任务</h2>
+              <p class="composer-sub">输入目标与约束。后端会调用已配置模型 API，生成 GoalSpec，完成 DAG 调度、Agent 执行、工具调用、验证与证据沉淀。</p>
+              <textarea id="goalInput" rows="7" placeholder="例如：分析一个 ROS2 软件仓库的故障，制定修复方案，执行修改与测试，最终给出可验证的修复报告和回滚建议。"></textarea>
+              <div class="composer-actions">
+                <div class="composer-hint"><span class="tiny-dot"></span>实际运行由后端任务链产生状态，界面不预置成功结果</div>
+                <div class="button-row">
+                  <button type="button" id="stopJobBtn" class="ghost-button danger-text">停止</button>
+                  <button type="button" id="startCustomBtn" class="primary-button">开始任务 <span>→</span></button>
+                </div>
+              </div>
+            </article>
+
+            <article class="pipeline-overview" aria-label="系统真实执行管线">
+              <div class="pipeline-head">
+                <div><span class="section-kicker">EXECUTION PIPELINE</span><h3>从目标到证据的真实链路</h3></div>
+                <span class="soft-status">结构图 · 状态由后端驱动</span>
+              </div>
+              <div id="workspacePipeline" class="pipeline-track"></div>
+            </article>
+
+            <article class="current-work">
+              <div class="section-title-row">
+                <div><span class="section-kicker">CURRENT WORK</span><h2>当前任务</h2></div>
+                <span id="currentRunStatus" class="state-pill neutral">IDLE</span>
+              </div>
+              <div id="currentWorkEmpty" class="empty-state">
+                <div class="empty-glyph">◎</div><strong>还没有活动任务</strong><span>提交任务后，这里会显示真实执行阶段和产出。</span>
+              </div>
+              <div id="currentWorkBody" class="hidden">
+                <div class="work-heading"><div><span id="currentRunId" class="mono subtle"></span><h3 id="currentObjective">正在读取任务目标…</h3></div><div id="currentProgress" class="progress-number">—</div></div>
+                <div id="phaseRail" class="phase-rail"></div>
+                <div id="workflowTelemetry" class="workflow-telemetry"></div>
+                <div class="current-work-bottom">
+                  <div id="liveAction" class="live-action"></div>
+                  <button type="button" class="text-button" data-go="tasks">查看详细进度 <span>↗</span></button>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <aside class="workspace-aside">
+            <section class="aside-section">
+              <div class="aside-title"><span>从模板开始</span><button type="button" class="text-button" data-go="lab">全部</button></div>
+              <div id="templateCards" class="template-list"></div>
+              <div id="templatePreview" class="template-preview hidden"></div>
+            </section>
+            <section class="aside-section system-readiness">
+              <div class="aside-title"><span>运行准备</span><button type="button" class="text-button" data-go="settings">设置</button></div>
+              <div id="readinessList" class="readiness-list"></div>
+            </section>
+            <section class="aside-section authenticity-mini">
+              <div class="aside-title"><span>运行真实性</span><button type="button" class="text-button" data-go="judge">查看证据</button></div>
+              <div id="authenticityMini" class="truth-mini-grid"></div>
+            </section>
+            <section class="aside-section recent-mini">
+              <div class="aside-title"><span>最近运行</span><button type="button" class="text-button" data-go="tasks">查看全部</button></div>
+              <div id="recentRunsMini"></div>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section id="view-tasks" class="view">
+        <div class="page-intro"><div><span class="section-kicker">TASK EXECUTION</span><h2>任务</h2><p>当前 Run 的任务节点、依赖、Assignment、执行层、验证与证据全部来自 authoritative snapshot；Benchmark 与故障实验不会混入任务历史。</p></div></div>
+        <div id="taskRunSummary" class="metric-ribbon"></div>
+        <div class="task-page-grid">
+          <article class="surface run-list-surface"><div class="surface-head"><h3>任务运行</h3><span class="soft-status">TASK RUNS ONLY</span></div><div id="runHistory" class="run-history"></div></article>
+          <article class="surface run-detail-surface">
+            <div class="section-title-row compact"><div><span class="section-kicker">CURRENT RUN</span><h2>运行详情</h2></div><span id="activeJobBadge" class="state-pill neutral">IDLE</span></div>
+            <div id="activeJob" class="detail-rows"></div>
+            <div class="log-head"><span>执行日志</span><span class="subtle">subprocess stdout · 已隐藏本机路径</span></div>
+            <pre id="jobLog" class="log-box">暂无活动任务</pre>
+          </article>
+        </div>
+        <article class="surface task-runtime-surface">
+          <div class="surface-head"><div><h3>真实任务图与执行状态</h3><p class="subtle">点击节点可核对依赖、Agent、Tier、Evidence 与 Verifier。</p></div><span id="taskGraphMeta" class="soft-status"></span></div>
+          <div class="deep-two"><div id="taskRuntimeGraph" class="task-flow"></div><aside id="taskRuntimeInspector" class="inspector-panel"></aside></div>
+        </article>
+      </section>
+
+      <section id="view-agents" class="view">
+        <div class="page-intro"><div><span class="section-kicker">AGENT STUDIO</span><h2>智能体与异构资源</h2><p>本页只展示 Capability Registry 与 Scheduler 实际记录。调度可靠性与实测成功率严格区分；前者来自 Scheduler capability，后者仅在存在运行样本时展示。</p></div></div>
+        <div id="agentSummary" class="metric-ribbon"></div>
+        <div id="agentTruthSummary" class="agent-truth-strip"></div>
+        <div class="agent-layout">
+          <article class="surface"><div class="surface-head"><h3>智能体能力池</h3><span class="soft-status">CapabilityProfile</span></div><div id="agentCards" class="agent-cards"></div></article>
+          <article class="surface"><div class="surface-head"><h3>端 · 边 · 云分配</h3><span class="soft-status">真实 Assignment</span></div><div id="tierLanes" class="tier-lanes"></div></article>
+        </div>
+        <article class="surface agent-studio-editor">
+          <div class="surface-head"><div><h3>Agent Studio 配置</h3><p class="subtle">这里配置的是“下一次 Run 的真实 API Agent 模板”。只有被 Scheduler 实际注册、绑定 Adapter 并产生 API provenance 的 Agent，才会出现在上方 Runtime Agents；模板本身不算运行证据。</p></div><span class="soft-status">NEW RUN CONFIG</span></div>
+          <div id="agentConfigList" class="endpoint-list"></div>
+          <div class="endpoint-form-grid">
+            <div><label for="agentId">Agent ID</label><input id="agentId" autocomplete="off" placeholder="researcher-1"></div>
+            <div><label for="agentName">名称</label><input id="agentName" autocomplete="off" placeholder="Researcher"></div>
+            <div><label for="agentRole">角色</label><input id="agentRole" autocomplete="off" placeholder="researcher"></div>
+            <div><label for="agentTier">执行层级</label><select id="agentTier"><option value="device">DEVICE</option><option value="edge">EDGE</option><option value="cloud" selected>CLOUD</option></select></div>
+            <div><label for="agentEnabled">状态</label><select id="agentEnabled"><option value="true" selected>启用</option><option value="false">停用（新 Run 不注册）</option></select></div>
+            <div class="wide"><label for="agentSkills">Skills（逗号分隔）</label><input id="agentSkills" autocomplete="off" placeholder="research,analysis"></div>
+            <div class="wide"><label for="agentPermissions">Tool Permissions（逗号分隔）</label><input id="agentPermissions" autocomplete="off" value="*"></div>
+            <div><label for="agentModel">模型覆盖（可空）</label><input id="agentModel" autocomplete="off" placeholder="留空使用 Provider 默认模型"></div>
+            <div><label for="agentMaxLoad">最大并发</label><input id="agentMaxLoad" type="number" min="1" value="1"></div>
+          </div>
+          <div class="settings-actions"><div class="security-note">保存/删除只修改后端 Agent 模板；当前正在运行的任务不会被前端热改写。</div><div class="button-row"><button type="button" id="newAgentBtn" class="ghost-button">清空表单</button><button type="button" id="saveAgentBtn" class="primary-button">保存 Agent</button></div></div>
+        </article>
+      </section>
+
+      <section id="view-deliverables" class="view">
+        <div class="page-intro"><div><span class="section-kicker">DELIVERABLES</span><h2>结果与证据</h2><p>仅展示逻辑文件名与证据类别；系统不会把电脑上的绝对目录暴露到产品界面。</p></div><button type="button" id="refreshArtifactsBtn" class="ghost-button">刷新文件</button></div>
+        <div id="artifactSummary" class="metric-ribbon"></div>
+        <article class="surface file-surface"><div id="artifactList" class="file-list"></div></article>
+        <div id="artifactModal" class="modal-backdrop hidden"><article class="artifact-modal surface"><div class="surface-head"><div><h3 id="artifactModalTitle">交付物预览</h3><p id="artifactModalMeta" class="subtle"></p></div><button type="button" id="closeArtifactModal" class="ghost-button">关闭</button></div><pre id="artifactPreview" class="artifact-preview"></pre></article></div>
+      </section>
+
+      <section id="view-settings" class="view">
+        <div class="settings-layout">
+          <div>
+            <div class="page-intro"><div><span class="section-kicker">SETTINGS</span><h2>模型服务与 API</h2><p>API Key 由后端安全存储，浏览器只获得“是否已配置”，不会读取原始密钥。</p></div></div>
+            <article class="surface settings-card">
+              <div class="settings-row"><label for="providerSelect"><span>模型服务</span><small>Provider</small></label><select id="providerSelect"></select></div>
+              <div class="settings-row"><label for="providerKey"><span>API Key</span><small id="keyStatusText">未配置</small></label><input id="providerKey" type="password" autocomplete="off" placeholder="输入新 Key；留空则保留现有 Key"></div>
+              <div class="settings-row"><label for="providerModel"><span>模型</span><small>用于真实任务</small></label><input id="providerModel" autocomplete="off" placeholder="模型名称"></div>
+              <div class="settings-row"><label for="providerBase"><span>服务地址</span><small>仅在设置页显示</small></label><input id="providerBase" autocomplete="off" placeholder="服务地址"></div>
+              <div class="settings-actions"><div id="providerSecurity" class="security-note"></div><div class="button-row"><button type="button" id="clearProviderKeyBtn" class="ghost-button danger-text">清除当前 Key</button><button type="button" id="testProviderBtn" class="ghost-button">测试连接</button><button type="button" id="saveProviderBtn" class="primary-button">保存设置</button></div></div>
+              <div id="providerTestResult" class="connection-result hidden"></div>
+            </article>
+            <article class="surface settings-card endpoint-card">
+              <div class="surface-head"><div><h3>远程执行节点</h3><p class="subtle">为 DEVICE / EDGE / CLOUD 注册真实 MQTT Agent。地址仅在设置页配置，不进入评委观测 DTO。</p></div><span class="soft-status">REMOTE RPC</span></div>
+              <div id="endpointList" class="endpoint-list"></div>
+              <div class="endpoint-form-grid">
+                <div><label for="endpointId">Endpoint ID</label><input id="endpointId" autocomplete="off" placeholder="edge-01"></div>
+                <div><label for="endpointName">节点名称</label><input id="endpointName" autocomplete="off" placeholder="边缘推理节点"></div>
+                <div><label for="endpointTier">执行层级</label><select id="endpointTier"><option value="device">DEVICE</option><option value="edge" selected>EDGE</option><option value="cloud">CLOUD</option></select></div>
+                <div><label for="endpointAgentId">远程 Agent ID</label><input id="endpointAgentId" autocomplete="off" placeholder="mqtt-agent-1"></div>
+                <div><label for="endpointHost">MQTT Broker</label><input id="endpointHost" autocomplete="off" placeholder="仅在设置页填写"></div>
+                <div><label for="endpointPort">端口</label><input id="endpointPort" type="number" min="1" max="65535" value="1883"></div>
+                <div><label for="endpointUsername">MQTT Username</label><input id="endpointUsername" autocomplete="off" placeholder="比赛部署建议启用认证"></div>
+                <div><label for="endpointPassword">MQTT Password</label><input id="endpointPassword" type="password" autocomplete="new-password" placeholder="留空保持已有密码"></div>
+                <div><label for="endpointTls">TLS</label><select id="endpointTls"><option value="false">关闭（仅隔离内网）</option><option value="true">启用 TLS</option></select></div>
+                <div><label for="endpointEnabled">节点状态</label><select id="endpointEnabled"><option value="true" selected>启用</option><option value="false">停用</option></select></div>
+                <div class="wide"><label for="endpointPrefix">Topic Prefix</label><input id="endpointPrefix" autocomplete="off" value="mosaic/v3"></div>
+              </div>
+              <div class="settings-actions"><div class="security-note">“测试远程节点”会真正发送 MQTT PLAN_REQUEST，并且只有收到目标 Agent 的 PLAN_RESPONSE 才标记 VERIFIED。</div><div class="button-row"><button type="button" id="newEndpointBtn" class="ghost-button">新建 / 清空</button><button type="button" id="testEndpointBtn" class="ghost-button">测试远程节点</button><button type="button" id="saveEndpointBtn" class="primary-button">保存节点</button></div></div>
+              <div id="endpointTestResult" class="connection-result hidden"></div>
+            </article>
+          </div>
+          <aside class="settings-aside">
+            <article class="surface readiness-card"><div class="surface-head"><h3>系统运行准备</h3><span class="soft-status">实时检查</span></div><div id="settingsReadiness" class="readiness-list padded"></div></article>
+            <article class="surface advanced-entry"><div class="surface-head"><div><h3>高级智能体配置</h3><p class="subtle">普通用户无需修改。需要按角色、Skills、层级和模型覆盖配置 Agent 时再进入。</p></div><span class="soft-status">ADVANCED</span></div><button type="button" class="ghost-button" data-go="agents">打开 Agent Studio</button></article>
+            <article class="surface privacy-card"><span class="privacy-icon">◈</span><div><h3>隐私边界</h3><p>密钥不进入前端状态、不写 localStorage；观测 API 会脱敏本机文件路径与 loopback 地址。</p></div></article>
+          </aside>
+        </div>
+      </section>
+
+      <section id="view-observatory" class="view">
+        <div class="page-intro observatory-intro"><div><span class="section-kicker">LIVE EXECUTION</span><h2>技术观测</h2><p>动画只在观察到真实状态变化时触发；历史数据保持静态，避免“看起来在运行”的装饰性动画。</p></div><div id="observationStatus" class="observation-status"></div></div>
+
+        <article class="observatory-stage">
+          <div class="stage-topline"><div><span class="section-kicker">COLLABORATION GRAPH</span><h3>智能体协同</h3></div><div id="topologyMeta" class="stage-meta"></div></div>
+          <div class="collab-layout"><div class="collab-canvas"><svg id="collaborationSvg" viewBox="0 0 900 430" preserveAspectRatio="xMidYMid meet"></svg><div id="collabEmpty" class="canvas-empty hidden">当前没有可展示的真实拓扑</div></div><aside id="collabDetail" class="stage-detail"></aside></div>
+        </article>
+
+        <div class="observatory-two">
+          <article class="process-stage"><div class="stage-topline"><div><span class="section-kicker">TASK FLOW</span><h3>任务执行链</h3></div><span id="taskCountMeta" class="stage-meta"></span></div><div id="taskFlow" class="task-flow"></div></article>
+          <article class="process-stage"><div class="stage-topline"><div><span class="section-kicker">MEMORY</span><h3>上下文保持</h3></div><span id="memoryMeta" class="stage-meta"></span></div><div id="memoryFlow" class="memory-flow"></div></article>
+        </div>
+
+        <article class="process-stage resource-stage"><div class="stage-topline"><div><span class="section-kicker">SCHEDULING</span><h3>端 · 边 · 云执行分配</h3></div><span id="schedulerMeta" class="stage-meta"></span></div><div id="resourceFlow" class="resource-flow"></div></article>
+      </section>
+
+      <section id="view-lab" class="view">
+        <div class="page-intro"><div><span class="section-kicker">VALIDATION LAB</span><h2>比赛验证实验</h2><p>这里是应用的验证层，不是产品首页。场景、故障与 Benchmark 都由真实后端操作触发。</p></div></div>
+        <div class="lab-section"><div class="lab-title"><span>跨领域应用模板</span><small>2 个不同类型长程场景</small></div><div id="scenarioCards" class="lab-grid"></div></div>
+        <div class="lab-section"><div class="lab-title"><span>动态异常与恢复</span><small>LiveFaultMailbox / RecoveryEngine</small></div><div id="faultCards" class="lab-grid"></div></div>
+        <article class="surface requirement-change"><label for="requirementInput">需求变更内容</label><input id="requirementInput" value="新增硬约束：最终交付必须包含风险说明、证据引用和回滚建议。"><span>预置场景运行中若不支持重编译，后端会 Fail-Closed 拒绝，不伪装成功。</span></article>
+        <div class="lab-section"><div class="lab-title"><span>长程与拓扑实验</span><small>测量口径强制标注</small></div><div id="benchmarkCards" class="lab-grid"></div></div>
+        <article class="surface"><div class="surface-head"><h3>最近故障请求</h3><span class="soft-status">PENDING / APPLIED / FAILED</span></div><div id="injectionList" class="compact-list"></div></article>
+      </section>
+
+      <section id="view-judge" class="view judge-view">
+        <div class="judge-shell">
+          <div class="judge-intro">
+            <div><span class="section-kicker">TECHNICAL TRANSPARENCY · XH-202631</span><h2>MOSAIC Ω 技术透视</h2><p>展开一次真实 Run 的任务编排、优化调度、动态拓扑、低熵通信、记忆选择、独立验证、恢复链和证据血缘。</p></div>
+            <div id="judgeScoreHint" class="judge-score"></div>
+          </div>
+
+          <div class="judge-deep-nav" role="tablist" aria-label="技术透视">
+            <button type="button" class="deep-tab active" data-deep="panorama">运行全景</button>
+            <button type="button" class="deep-tab" data-deep="dag">Dynamic DAG</button>
+            <button type="button" class="deep-tab" data-deep="scheduler">优化调度</button>
+            <button type="button" class="deep-tab" data-deep="collaboration">协作拓扑</button>
+            <button type="button" class="deep-tab" data-deep="communication">低熵通信</button>
+            <button type="button" class="deep-tab" data-deep="memory">四层记忆</button>
+            <button type="button" class="deep-tab" data-deep="verifier">独立审核</button>
+            <button type="button" class="deep-tab" data-deep="recovery">故障恢复</button>
+            <button type="button" class="deep-tab" data-deep="lab">验证实验</button>
+            <button type="button" class="deep-tab" data-deep="lineage">数据血缘</button>
+          </div>
+
+          <section class="deep-panel active" data-deep-panel="panorama">
+            <div class="deep-panel-head"><div><span class="section-kicker">RUN PANORAMA</span><h3>从用户目标到可核验证据</h3></div><span class="soft-status">点击任意模块继续下钻</span></div>
+            <div id="judgePanorama" class="panorama-flow"></div>
+            <div class="judge-grid judge-grid-tight">
+              <article class="surface"><div class="surface-head"><h3>当前 Run 真实性</h3><span class="soft-status">Fail-closed</span></div><div id="authenticityPanel" class="truth-panel"></div></article>
+              <article class="surface"><div class="surface-head"><h3>性能与资源</h3><span class="soft-status">Measured / Estimated 分离</span></div><div id="performancePanel" class="truth-panel"></div></article>
+            </div>
+            <div id="requirementMatrix" class="requirement-matrix compact-matrix"></div>
+          </section>
+
+          <section class="deep-panel" data-deep-panel="dag"><div class="deep-panel-head"><div><span class="section-kicker">DYNAMIC TASK GRAPH</span><h3>DAG 与 Task Inspector</h3></div><span id="deepDagMeta" class="soft-status"></span></div><div class="deep-two"><article class="surface deep-canvas"><div id="deepDagGraph" class="task-flow"></div></article><aside id="deepDagInspector" class="surface inspector-panel"></aside></div></section>
+
+          <section class="deep-panel" data-deep-panel="scheduler"><div class="deep-panel-head"><div><span class="section-kicker">SCHEDULER DECISION</span><h3>优化求解 / 代价模型 / 真实 Assignment</h3></div><span id="deepSchedulerMeta" class="soft-status"></span></div><div id="deepScheduler" class="deep-stack"></div></section>
+
+          <section class="deep-panel" data-deep-panel="collaboration"><div class="deep-panel-head"><div><span class="section-kicker">MULTI-AGENT COLLABORATION</span><h3>谁与谁正在协作</h3></div><span id="deepCollabMeta" class="soft-status"></span></div><div class="deep-two"><article class="surface deep-canvas"><svg id="deepCollaborationSvg" viewBox="0 0 900 430" preserveAspectRatio="xMidYMid meet"></svg></article><aside id="deepCollabInspector" class="surface inspector-panel"></aside></div></section>
+
+          <section class="deep-panel" data-deep-panel="communication"><div class="deep-panel-head"><div><span class="section-kicker">LOW-ENTROPY COMMUNICATION</span><h3>SEND / MERGE / DROP / DEFER 与压缩链</h3></div><span id="deepCommMeta" class="soft-status"></span></div><div id="deepCommunication" class="deep-stack"></div></section>
+
+          <section class="deep-panel" data-deep-panel="memory"><div class="deep-panel-head"><div><span class="section-kicker">HIERARCHICAL MEMORY</span><h3>Working / Episodic / Semantic / Procedural</h3></div><span id="deepMemoryMeta" class="soft-status"></span></div><div id="deepMemory" class="deep-stack"></div></section>
+
+          <section class="deep-panel" data-deep-panel="verifier"><div class="deep-panel-head"><div><span class="section-kicker">INDEPENDENT VERIFICATION</span><h3>Execution → Evidence → Predicate → Verdict</h3></div><span id="deepVerifierMeta" class="soft-status"></span></div><div id="deepVerifier" class="deep-stack"></div></section>
+
+          <section class="deep-panel" data-deep-panel="recovery"><div class="deep-panel-head"><div><span class="section-kicker">RECOVERY CHAIN</span><h3>异常注入、失效检测、重分配与恢复</h3></div><span id="deepRecoveryMeta" class="soft-status"></span></div><div id="deepRecovery" class="deep-stack"></div></section>
+
+          <section class="deep-panel" data-deep-panel="lab"><div class="deep-panel-head"><div><span class="section-kicker">VALIDATION LAB</span><h3>受控变量实验与 Baseline</h3></div><button type="button" class="ghost-button" data-go="lab">打开完整实验页</button></div><div id="deepLabSummary" class="deep-stack"></div></section>
+
+          <section class="deep-panel" data-deep-panel="lineage"><div class="deep-panel-head"><div><span class="section-kicker">TRACEABILITY</span><h3>界面数字如何追溯到事件与证据</h3></div><button type="button" class="ghost-button" data-go="lineage">打开完整血缘页</button></div><div id="deepLineageSummary" class="deep-stack"></div></section>
+        </div>
+      </section>
+
+      <section id="view-lineage" class="view">
+        <div class="page-intro"><div><span class="section-kicker">TRACEABILITY</span><h2>数据血缘与状态契约</h2><p>屏幕数字、状态和交互都必须能追溯到 API 字段、后端事件或明确的前端派生公式。</p></div></div>
+        <div id="lineageSummary" class="metric-ribbon"></div>
+        <article class="surface lineage-surface"><div class="surface-head"><h3>屏幕数字数据血缘</h3><span class="soft-status">Source → Formula</span></div><div class="table-scroll"><table><thead><tr><th>UI</th><th>API</th><th>字段</th><th>权威来源</th><th>计算</th></tr></thead><tbody id="lineageTable"></tbody></table></div></article>
+        <article class="surface lineage-surface"><div class="surface-head"><h3>状态进入条件</h3><span class="soft-status">State Contract</span></div><div class="table-scroll"><table><thead><tr><th>对象</th><th>状态</th><th>进入时间</th><th>进入条件</th><th>来源</th></tr></thead><tbody id="stateContract"></tbody></table></div></article>
+        <article class="surface lineage-surface"><div class="surface-head"><h3>交互与动画语义</h3><span class="soft-status">No fake motion</span></div><div id="interactionAudit" class="interaction-audit"></div></article>
+      </section>
+    </main>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

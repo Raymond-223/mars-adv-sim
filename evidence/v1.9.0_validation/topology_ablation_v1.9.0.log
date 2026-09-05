@@ -1,0 +1,41 @@
+=== MOSAIC-Ω topology replay ablation ===
+{
+  "study_name": "MOSAIC-Ω topology communication replay ablation",
+  "measurement_mode": "same-message-set routing replay",
+  "timestamp": "2026-09-05 09:15:03",
+  "source_runtime": {
+    "runs": 5,
+    "success_rate_pct_measured": 100.0,
+    "avg_latency_ms_measured": 223.39,
+    "captured_messages_measured": 10,
+    "active_agent_count_measured": 3
+  },
+  "modes": {
+    "full_mesh": {
+      "transmissions_replay": 20,
+      "message_bytes_replay": 38200,
+      "estimated_token_equivalent": 9550,
+      "token_metric_is_estimate": true,
+      "transmission_reduction_vs_full_mesh_pct": 0.0,
+      "byte_reduction_vs_full_mesh_pct": 0.0
+    },
+    "static_star": {
+      "transmissions_replay": 20,
+      "message_bytes_replay": 38200,
+      "estimated_token_equivalent": 9550,
+      "token_metric_is_estimate": true,
+      "transmission_reduction_vs_full_mesh_pct": 0.0,
+      "byte_reduction_vs_full_mesh_pct": 0.0
+    },
+    "mosaic_sparse": {
+      "transmissions_replay": 10,
+      "message_bytes_replay": 19100,
+      "estimated_token_equivalent": 4775,
+      "token_metric_is_estimate": true,
+      "transmission_reduction_vs_full_mesh_pct": 50.0,
+      "byte_reduction_vs_full_mesh_pct": 50.0
+    }
+  },
+  "provenance_note": "mosaic_sparse is the captured runtime message set; full_mesh/static_star are replay fan-out costs, not independent physical-network executions"
+}
+Saved: /mnt/data/mosaic_work/MOSAIC-Omega-V3-XH202631-Product-First-v1.9.0/evidence/v1.9.0_validation/topology_ablation_v1.9.0.json

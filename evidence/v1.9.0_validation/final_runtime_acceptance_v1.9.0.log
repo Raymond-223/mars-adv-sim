@@ -1,0 +1,24 @@
+{
+  "status": "BLOCKED_FAIL_CLOSED",
+  "passed": false,
+  "checks": [
+    {
+      "name": "ortools_importable",
+      "passed": false
+    },
+    {
+      "name": "deepseek_provider_selected",
+      "passed": true
+    },
+    {
+      "name": "deepseek_key_present",
+      "passed": false
+    },
+    {
+      "name": "deepseek_official_endpoint",
+      "passed": true,
+      "endpoint_host": "api.deepseek.com"
+    }
+  ],
+  "instruction": "Run START_MOSAIC.bat, configure DeepSeek in Settings, test the connection, and keep the official api.deepseek.com endpoint."
+}

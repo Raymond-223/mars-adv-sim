@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Runtime / logs
+.mosaic_workspace/
+.ablation_workspace/
+.benchmark_workspace/
+.full_chaos_workspace/
+*.log
+logs/
+telemetry/
+tmp/
+cache/
+
+# Report renderings produced by scripts/build_all_pdfs.py.
+# Scoped to the temp artifacts only: a bare `*.html` also swallowed the
+# console frontend source (apps/console/frontend/index.html).
+*_temp.html
+
+# evidence/ is the release record declared by SHA256_MANIFEST.txt, so the
+# generic log rules above must not apply inside it.
+!evidence/**/*.log
+!evidence/**/logs/
+
+# Generated archives / outputs
+*.zip
+*.rar
+*.tar.gz
+outputs/
+artifacts/
+experiments/results/raw/
