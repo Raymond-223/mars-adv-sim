@@ -12,9 +12,9 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
-from ..models import Assignment, TaskNodeView, ToolCall
-
 from mosaic_omega.providers import create_openai_compatible_client
+
+from ..models import Assignment, TaskNodeView, ToolCall
 
 try:
     from dotenv import load_dotenv
@@ -224,6 +224,10 @@ class DeepSeekAgent:
                     "description": output,
                     "acceptance_conditions": list(task.acceptance_conditions),
                     "api_provenance": provenance,
+                    # Declared explicitly so observability never has to guess
+                    # whether a call acted on the environment or only persisted
+                    # the model's own text.
+                    "execution_intent": "persist_planner_output",
                 },
                 idempotency_key=(
                     f"{task.run_id}:{task.task_id}:{max(1, task.attempt)}:{assignment.tool_id}"

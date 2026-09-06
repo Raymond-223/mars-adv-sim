@@ -154,6 +154,19 @@ class MemoryService:
         full_tokens = estimate_tokens(full_history_text)
         pack.full_history_token_estimate = full_tokens
         pack.compression_ratio = (pack.token_estimate / full_tokens) if full_tokens else 0.0
+        # The pipeline the console renders starts at the full run history, so the
+        # trace records that origin explicitly rather than starting at "candidates".
+        trace = dict(pack.selection_trace or {})
+        trace["full_history"] = {
+            "record_count": len(history),
+            "token_estimate": full_tokens,
+            "estimator": "max(1, (len(text)+1)//2) character heuristic, not a model tokenizer",
+        }
+        trace["pipeline"] = [
+            "full_history", "candidate_recall", "permission_and_status_filter",
+            "ranking", "recall_limit", "dedupe_and_budget", "context_pack", "agent_awakening",
+        ]
+        pack.selection_trace = trace
         self.metrics.record_context_pack(
             context_tokens=pack.token_estimate,
             full_history_tokens=full_tokens,

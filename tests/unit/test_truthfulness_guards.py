@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from mosaic_omega.execution_scheduler.adapters import llm_agent as llm_module
 from mosaic_omega.execution_scheduler.adapters.llm_agent import LLMAgentAdapter
 from mosaic_omega.execution_scheduler.models import Assignment, TaskNodeView
 from mosaic_omega.integration import MosaicMainChain
+from mosaic_omega.observability.snapshots import SnapshotStore
 from test_support.mock_mainchain import run_test_mock
 
 
@@ -60,7 +58,7 @@ def test_mock_run_snapshot_is_explicitly_rejected_as_real_agent(tmp_path: Path) 
     workspace = tmp_path / "workspace"
     chain = MosaicMainChain(workspace=workspace, scheduler_policy="greedy")
     run_test_mock(chain, "生成报告，必须验收。", run_id="mock-truth-test")
-    snap = json.loads((workspace / "observability" / "latest.json").read_text(encoding="utf-8"))
+    snap = SnapshotStore(workspace / "observability").read_latest()
     assert snap["authenticity"]["verdict"] == "MOCK_EXECUTION"
     assert snap["authenticity"]["competition_strict_real_agent"] is False
     assert snap["authenticity"]["mock_agents"]
@@ -70,7 +68,7 @@ def test_task_status_has_authoritative_event_provenance(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     chain = MosaicMainChain(workspace=workspace, scheduler_policy="greedy")
     run_test_mock(chain, "生成报告，必须验收。", run_id="state-truth-test")
-    snap = json.loads((workspace / "observability" / "latest.json").read_text(encoding="utf-8"))
+    snap = SnapshotStore(workspace / "observability").read_latest()
     assert snap["task_graph"]["nodes"]
     for node in snap["task_graph"]["nodes"]:
         provenance = node["status_provenance"]

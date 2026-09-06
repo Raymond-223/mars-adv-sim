@@ -58,14 +58,64 @@ class ProviderSemanticJudge:
             return dict(usage)
         return {k: getattr(usage, k) for k in ("prompt_tokens", "completion_tokens", "total_tokens") if getattr(usage, k, None) is not None}
 
+    @staticmethod
+    def _parse_json(content: str) -> Any:
+        text = content or "{}"
+        if text.startswith("```"):
+            text = text.replace("```json", "", 1).replace("```", "", 1).rsplit("```", 1)[0].strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+    def _call(self, system: str, payload: dict[str, Any], *, max_tokens: int) -> Any:
+        kwargs = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0,
+            "max_tokens": max_tokens,
+        }
+        if self.provider_id == "deepseek":
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        return self._get_client().chat.completions.create(**kwargs)
+
     def judge(self, *, task: Any, predicate: str, result: Any, evidence: tuple[Any, ...]) -> dict[str, Any]:
+        judgments = self.judge_batch(task=task, predicates=(predicate,), result=result, evidence=evidence)
+        return judgments.get(predicate, {"available": False, "passed": False, "rationale": "no judgment returned"})
+
+    def judge_batch(
+        self,
+        *,
+        task: Any,
+        predicates: tuple[str, ...],
+        result: Any,
+        evidence: tuple[Any, ...],
+    ) -> dict[str, dict[str, Any]]:
+        """Judge every semantic acceptance condition of one task in a single call.
+
+        The previous implementation issued one provider request per acceptance
+        condition.  A task with seven semantic conditions therefore paid seven
+        round trips to evaluate the *same* deliverable, which dominated run time
+        without improving the judgment.
+        """
+        if not predicates:
+            return {}
         if not self.available:
-            return {"available": False, "passed": False, "rationale": "provider unavailable"}
+            return {
+                predicate: {"available": False, "passed": False, "rationale": "provider unavailable"}
+                for predicate in predicates
+            }
         deliverable = self._deliverable_text(result)
         # Avoid sending arbitrary huge output back to a verifier model.
         deliverable = deliverable[:40_000]
         payload = {
-            "acceptance_condition": predicate,
+            "acceptance_conditions": [
+                {"id": index, "condition": predicate} for index, predicate in enumerate(predicates)
+            ],
             "task_description": getattr(task, "description", ""),
             "execution_success": bool(getattr(result, "success", False)),
             "exit_code": getattr(result, "exit_code", None),
@@ -73,34 +123,41 @@ class ProviderSemanticJudge:
             "evidence_count": len(evidence),
         }
         system = (
-            "You are an independent acceptance verifier. Judge ONLY from the supplied execution output/deliverable and evidence count. "
-            "Do not accept a task merely because it claims it is complete or repeats the acceptance condition. "
-            "Return strict JSON with keys passed:boolean and rationale:string. If evidence is insufficient, passed must be false."
+            "You are an independent acceptance verifier. Judge EACH supplied acceptance condition ONLY from the "
+            "supplied execution output/deliverable and evidence count. "
+            "Do not accept a condition merely because the output claims it is complete or repeats the condition. "
+            'Return strict JSON: {"judgments": [{"id": <int>, "passed": <bool>, "rationale": "<string>"}, ...]} '
+            "with exactly one entry per supplied condition. If evidence is insufficient for a condition, its passed must be false."
         )
-        kwargs = {
-            "model": self.model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-            "response_format": {"type": "json_object"},
-            "temperature": 0,
-            "max_tokens": 300,
-        }
-        if self.provider_id == "deepseek":
-            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
-        response = self._get_client().chat.completions.create(**kwargs)
-        content = response.choices[0].message.content or "{}"
-        if content.startswith("```"):
-            content = content.replace("```json", "", 1).replace("```", "", 1).rsplit("```", 1)[0].strip()
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
-            parsed = {"passed": False, "rationale": "verifier returned invalid JSON"}
-        return {
+        response = self._call(system, payload, max_tokens=min(1200, 160 * len(predicates) + 120))
+        parsed = self._parse_json(response.choices[0].message.content)
+        by_id: dict[int, dict[str, Any]] = {}
+        if isinstance(parsed, dict):
+            for row in parsed.get("judgments", []) or []:
+                if isinstance(row, dict) and isinstance(row.get("id"), int):
+                    by_id[row["id"]] = row
+        shared = {
             "available": True,
-            "passed": bool(parsed.get("passed", False)),
-            "rationale": str(parsed.get("rationale") or ""),
             "provider": self.provider_id,
             "model": getattr(response, "model", None) or self.model,
             "request_id": getattr(response, "id", None),
             "usage": self._usage(response),
             "verification_semantics": "independent_model_semantic_judgment",
+            "batch_size": len(predicates),
+            "batched_request": True,
         }
+        judgments: dict[str, dict[str, Any]] = {}
+        for index, predicate in enumerate(predicates):
+            row = by_id.get(index)
+            if row is None:
+                # Fail closed: a condition the verifier did not answer is not passed.
+                judgments[predicate] = shared | {
+                    "passed": False,
+                    "rationale": "independent verifier returned no judgment for this acceptance condition",
+                }
+                continue
+            judgments[predicate] = shared | {
+                "passed": bool(row.get("passed", False)),
+                "rationale": str(row.get("rationale") or ""),
+            }
+        return judgments

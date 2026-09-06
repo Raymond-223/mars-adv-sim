@@ -48,5 +48,6 @@ def test_beta_posterior_changes_failure_cost() -> None:
         agent.posterior["general"] = {"alpha": 99.0, "beta": 1.0}
         registry.save(agent)
         task = TaskNodeView("run", "a", "general", "x", state=TaskState.READY)
-        candidate = next(iter(scheduler._candidates(task).values()))
+        candidates, _rejected = scheduler.candidates_for(task)
+        candidate = next(iter(candidates.values()))
         assert candidate.cost_breakdown["failure"] < 2.0

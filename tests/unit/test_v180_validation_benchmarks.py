@@ -20,7 +20,13 @@ def test_scheduler_ablation_never_labels_fallback_as_ortools(tmp_path):
     assert result["modes"]["greedy"]["available"] is True
     ortools = result["modes"]["ortools"]
     if ortools["available"]:
-        assert all(item["solver_provenance"]["algorithm"] == "ortools" for item in ortools["assignments"])
+        # The invariant is that an OR-Tools-labelled assignment really came from an
+        # OR-Tools solver, not that the algorithm is literally named "ortools".
+        assert all(
+            str(item["solver_provenance"]["engine"]).startswith("ortools.")
+            and item["solver_provenance"]["status"] in {"OPTIMAL", "FEASIBLE"}
+            for item in ortools["assignments"]
+        )
     else:
         assert "fallback" in ortools["reason"].lower()
         assert ortools["assignments"] == []

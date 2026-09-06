@@ -55,6 +55,10 @@ class Settings:
     snapshot_interval: int
     max_task_retries: int
     scheduler_allow_fallback: bool
+    scheduler_solver_timeout_s: float
+    agent_pool_min_instances: int
+    agent_pool_max_instances: int
+    provider_max_concurrency: int
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -75,6 +79,18 @@ class Settings:
             raise ValueError("EVENT_SNAPSHOT_INTERVAL must be >= 0")
         if max_task_retries < 0:
             raise ValueError("MAX_TASK_RETRIES must be >= 0")
+        solver_timeout = _number(source, "SCHEDULER_SOLVER_TIMEOUT_S", 5.0)
+        if solver_timeout <= 0:
+            raise ValueError("SCHEDULER_SOLVER_TIMEOUT_S must be > 0")
+        pool_min = _integer(source, "AGENT_POOL_MIN_INSTANCES", 2)
+        pool_max = _integer(source, "AGENT_POOL_MAX_INSTANCES", 4)
+        if pool_min < 1:
+            raise ValueError("AGENT_POOL_MIN_INSTANCES must be >= 1")
+        if pool_max < pool_min:
+            raise ValueError("AGENT_POOL_MAX_INSTANCES must be >= AGENT_POOL_MIN_INSTANCES")
+        provider_concurrency = _integer(source, "PROVIDER_MAX_CONCURRENCY", 6)
+        if provider_concurrency < 1:
+            raise ValueError("PROVIDER_MAX_CONCURRENCY must be >= 1")
         return cls(
             database_url=source.get(
                 "EXECUTION_DATABASE_URL",
@@ -100,6 +116,10 @@ class Settings:
             snapshot_interval=snapshot_interval,
             max_task_retries=max_task_retries,
             scheduler_allow_fallback=_boolean(source, "SCHEDULER_ALLOW_FALLBACK", True),
+            scheduler_solver_timeout_s=solver_timeout,
+            agent_pool_min_instances=pool_min,
+            agent_pool_max_instances=pool_max,
+            provider_max_concurrency=provider_concurrency,
         )
 
 

@@ -9,9 +9,9 @@ from __future__ import annotations
 import time
 from typing import Any, Sequence
 
+from ..agent_runtime.models import AgentProfile, AgentStatus
 from ..execution_scheduler.models import CapabilityProfile
 from ..execution_scheduler.service import ExecutionSchedulerService
-from ..agent_runtime.models import AgentProfile, AgentStatus
 from .contracts import runtime_agent_to_capability
 
 
@@ -48,6 +48,7 @@ class DynamicRegistrySchedulerBridge:
         latency_ms: float | None = None,
         adapter: Any | None = None,
         fixed_cost: float = 0.0,
+        metadata: dict[str, Any] | None = None,
     ) -> CapabilityProfile:
         now = time.time()
         capability = runtime_agent_to_capability(
@@ -69,6 +70,11 @@ class DynamicRegistrySchedulerBridge:
             "latency_source": "configured_value" if latency_ms is not None else "unmeasured",
             "latency_measurement_count": 0,
         })
+        if metadata:
+            # Explicit scheduling policy declared by the caller (for example an
+            # Agent that may only serve one privacy class).  Applied last so it
+            # cannot be silently overwritten by derived provenance fields.
+            capability.metadata.update(metadata)
         return self.execution.register_actor(capability, adapter=adapter)
 
     def heartbeat(

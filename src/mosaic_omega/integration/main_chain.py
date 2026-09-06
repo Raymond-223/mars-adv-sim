@@ -17,16 +17,19 @@ import sys
 import threading
 import time
 import uuid
+from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from ..agent_runtime.edge_cloud import ExecutionTier
 from ..agent_runtime.models import AgentProfile
 from ..agent_runtime.task_messages import ConstraintDelta, DeltaOperation, EvidenceRef, FactDelta, TaskMessage
 from ..agent_runtime.trace_context import TRACE_CONTEXTS, business_content_hash
 from ..execution_scheduler.adapters.deepseek_agent import DeepSeekAgent
+from ..execution_scheduler.adapters.local_agent import LocalDeterministicAgent, RequirementBaselineAgent
 from ..execution_scheduler.adapters.mqtt_agent import AgentRpcClient, MqttAgentAdapter
+from ..execution_scheduler.adapters.tool_planning_agent import ToolPlanningAgent
 from ..execution_scheduler.config import Settings
 from ..execution_scheduler.models import (
     ActorKind,
@@ -35,7 +38,6 @@ from ..execution_scheduler.models import (
     ErrorClass,
     TaskNodeView,
     TaskState,
-    ToolCall,
 )
 from ..execution_scheduler.service import ExecutionSchedulerService
 from ..goalspec import compile_goal
@@ -43,6 +45,7 @@ from ..memory_recovery import MemoryService
 from ..message_topology import MessageTopologyService
 from ..observability import ObservabilityRuntime
 from ..todag import ToDAGEngine
+from ..todag.agents import DecompositionAgent
 from .contracts import (
     canonical_goalspec,
     event_contract,
@@ -74,6 +77,7 @@ class MainChainRunResult:
     verification_results: list[dict[str, Any]]
     evidence_manifest: list[dict[str, Any]]
     topology_snapshot: dict[str, Any]
+    topology_history: list[dict[str, Any]]
     communication: list[dict[str, Any]]
     context_packs: dict[str, dict[str, Any]]
     memory_metrics: dict[str, float]
@@ -94,6 +98,7 @@ class MainChainRunResult:
             "verification_results": self.verification_results,
             "evidence_manifest": self.evidence_manifest,
             "topology_snapshot": self.topology_snapshot,
+            "topology_history": self.topology_history,
             "communication": self.communication,
             "context_packs": self.context_packs,
             "memory_metrics": self.memory_metrics,
@@ -118,13 +123,22 @@ class MosaicMainChain:
         observability: ObservabilityRuntime | None = None,
     ) -> None:
         workspace = Path(workspace).resolve()
+        if load_dotenv is not None:
+            load_dotenv()
+        # Start from the process environment so every documented knob
+        # (SCHEDULER_WEIGHT_*, MAX_TASK_RETRIES, SCHEDULER_ALLOW_FALLBACK,
+        # AGENT_POOL_*, PROVIDER_MAX_CONCURRENCY, ...) actually reaches the
+        # runtime.  Passing only a literal dict made ``.env`` configuration
+        # silently inert for every main-chain run.  Chain-owned values are
+        # applied last and still win.
         settings = Settings.from_env({
+            **os.environ,
             "EXECUTION_WORKSPACE": str(workspace),
             "SCHEDULER_POLICY": scheduler_policy,
             "ALLOWED_COMMANDS": f"python,python3,python.exe,{Path(sys.executable).name}",
-            "TOOL_TIMEOUT_S": "30",
-            "EVENT_SNAPSHOT_INTERVAL": "100",
-            "EXECUTION_SCHEMA_VERSION": "0.1",
+            "TOOL_TIMEOUT_S": os.getenv("TOOL_TIMEOUT_S", "30"),
+            "EVENT_SNAPSHOT_INTERVAL": os.getenv("EVENT_SNAPSHOT_INTERVAL", "100"),
+            "EXECUTION_SCHEMA_VERSION": os.getenv("EXECUTION_SCHEMA_VERSION", "0.1"),
         })
         # Product runs default to stdlib SQLite so EventStore/task/idempotency
         # authority survives process restarts without requiring Docker/PostgreSQL.
@@ -180,20 +194,131 @@ class MosaicMainChain:
                 memory_metrics=self.memory.export_metrics(),
                 topology_snapshot=topology,
                 topology_telemetry=self.topology.telemetry.snapshot(),
+                # The full version history is what makes topology *dynamic* in the
+                # console: without it only the final graph could ever be shown.
+                topology_history=list(self._topology_history),
             )
 
-    def register_default_deepseek_resources(self, required_skills: Iterable[str]) -> None:
-        """Register user-configured Agent Studio roles plus safe automatic fallbacks.
+    # Resource pools are declared once so DEVICE/EDGE/CLOUD are genuinely
+    # separate capacity, latency, energy and privacy domains that the solver
+    # chooses between, not a label stamped on a single machine.
+    _RESOURCE_POOLS: tuple[dict[str, Any], ...] = (
+        {
+            "actor_id": "pool-device", "tier": "device", "base_capacity": 2,
+            "latency_ms": 5.0, "energy_cost": 0.2, "reliability": 0.99,
+            "allowed_privacy_levels": ["normal", "public", "internal", "confidential", "restricted", "secret"],
+            "description": "on-device execution; no network egress; smallest capacity",
+        },
+        {
+            "actor_id": "pool-edge", "tier": "edge", "base_capacity": 4,
+            "latency_ms": 25.0, "energy_cost": 0.5, "reliability": 0.97,
+            "allowed_privacy_levels": ["normal", "public", "internal", "confidential"],
+            "description": "edge node execution; low latency; rejects restricted/secret data",
+        },
+        {
+            "actor_id": "pool-cloud", "tier": "cloud", "base_capacity": 8,
+            "latency_ms": 80.0, "energy_cost": 1.0, "reliability": 0.95,
+            "allowed_privacy_levels": ["normal", "public", "internal"],
+            "description": "cloud provider execution; highest capacity; rejects confidential and above",
+        },
+    )
+
+    def _register_resource_pools(self, *, agent_count: int) -> None:
+        for pool in self._RESOURCE_POOLS:
+            capacity = pool["base_capacity"]
+            if pool["tier"] == "cloud":
+                capacity = max(capacity, agent_count * 2)
+            self.execution.register_actor(CapabilityProfile(
+                actor_id=pool["actor_id"], kind=ActorKind.DEVICE, task_types=frozenset({"*"}),
+                capabilities=frozenset({"*"}), permissions=frozenset({"*"}),
+                reliability=pool["reliability"], latency_ms=pool["latency_ms"],
+                energy_cost=pool["energy_cost"], capacity=capacity,
+                device_location=pool["tier"],
+                metadata={
+                    "tier": pool["tier"],
+                    "allowed_privacy_levels": list(pool["allowed_privacy_levels"]),
+                    "pool_description": pool["description"],
+                    "capacity_source": "declared_resource_pool",
+                },
+            ))
+
+    #: Baseline delivery kinds per role, used when the caller does not supply the
+    #: kinds actually present in the compiled DAG.
+    _DEFAULT_DELIVERY_KINDS: dict[str, tuple[str, ...]] = {
+        "code": ("software", "document", "reasoning"),
+        "robotics": ("robotics", "document", "reasoning"),
+        "data": ("data", "document", "research", "reasoning"),
+        "calculation": ("data", "document", "reasoning"),
+        "search": ("research", "document", "reasoning"),
+        "analysis": ("research", "document", "data", "reasoning"),
+        "report": ("document", "research", "reasoning"),
+        "review": ("verification", "document", "reasoning"),
+        "plan": ("document", "reasoning"),
+    }
+
+    def _delivery_kinds_for(
+        self, skill: str, observed: Mapping[str, set[str]] | None = None
+    ) -> tuple[str, ...]:
+        """Which delivery kinds a role Agent is allowed to act on.
+
+        A role can legitimately serve more than one kind (a ``code`` Agent also
+        writes design docs), but never all of them: that is what keeps the
+        permission scope a meaningful routing constraint.
+
+        The kinds a role must cover are taken from the compiled DAG when it is
+        available.  A purely static table would under-grant, because ToDAG picks a
+        node's delivery kind from its text ("...并通过测试" is software work) while
+        the skill guess can land on a different role, leaving the task with no
+        permitted executor at all.
+        """
+        kinds = set(self._DEFAULT_DELIVERY_KINDS.get(skill, ("document", "research", "reasoning")))
+        if observed:
+            kinds.update(observed.get(skill, ()))
+        return tuple(sorted(kinds))
+
+    @staticmethod
+    def _permissions_for(kinds: Sequence[str]) -> tuple[str, ...]:
+        table = DecompositionAgent.DELIVERY_PERMISSIONS
+        granted = {perm for kind in kinds for perm in table.get(kind, ())}
+        return tuple(sorted(granted)) or ("file.write",)
+
+    def _pool_size(self, skill: str, demand: int) -> int:
+        """How many instances of one role the pool should hold.
+
+        The rule is demand-driven with a floor: a role that is actually needed
+        always gets at least ``AGENT_POOL_MIN_INSTANCES`` instances so same-role
+        Agents can compete, run in parallel and cover for each other.  A single
+        instance per role is what made the previous build a static pipeline.
+        """
+        settings = self.execution.settings
+        # One instance per concurrently-needed task of that role, floored at the
+        # configured minimum and capped so a huge DAG cannot open an unbounded
+        # number of provider connections.  Keeping the floor above 1 is the point:
+        # it guarantees there is always a second same-role Agent to compete with,
+        # take over from, or run alongside the first.
+        return max(settings.agent_pool_min_instances, min(settings.agent_pool_max_instances, max(1, demand)))
+
+    def register_default_deepseek_resources(
+        self,
+        required_skills: Iterable[str],
+        delivery_kinds_by_skill: Mapping[str, set[str]] | None = None,
+    ) -> None:
+        """Build the heterogeneous Agent pool and the end-edge-cloud resource pools.
 
         New custom runs consume ``MOSAIC_AGENT_CONFIG_PATH``.  Enabled templates
         affect real scheduling (skills, permissions, tier, max load and requested
-        model).  Missing skills still receive an explicit automatic provider Agent
-        so a user cannot accidentally make the system unusable.
+        model).  Every required role is then instantiated as *multiple* competing
+        Agent instances, plus a standby, so the group is a real pool rather than
+        one Agent per role.
         """
         if load_dotenv is None:
             raise RuntimeError('缺少 python-dotenv，请运行：py -m pip install -e "[deepseek]"')
         load_dotenv()
-        skills = sorted({str(skill).strip() for skill in required_skills if str(skill).strip()}) or ["general"]
+        raw_skills = [str(skill).strip() for skill in required_skills if str(skill).strip()]
+        demand = Counter(raw_skills)
+        skills = sorted(demand) or ["general"]
+        if not demand:
+            demand = Counter({"general": 1})
         existing = {profile.actor_id for profile in self.execution.capabilities.list()}
         provider_id = os.getenv("MOSAIC_PROVIDER", "deepseek").strip() or "deepseek"
         provider_slug = "".join(ch for ch in provider_id.casefold() if ch.isalnum() or ch in "-_") or "provider"
@@ -210,6 +335,7 @@ class MosaicMainChain:
             except (OSError, ValueError, TypeError):
                 configured = []
 
+        pool_members: list[str] = []
         covered_skills: set[str] = set()
         for row in configured:
             agent_id = str(row.get("agent_id") or "").strip()
@@ -251,39 +377,126 @@ class MosaicMainChain:
             )
             covered_skills.update(skills if "*" in row_skills else (set(row_skills) & set(skills)))
             existing.add(agent_id)
+            pool_members.append(agent_id)
 
-        # Automatic role Agents only fill required capabilities not covered by
-        # the user's Agent Studio templates.
+        # Automatic role Agents fill required capabilities not covered by the
+        # user's Agent Studio templates.  Each role becomes several independent
+        # instances with their own identity, load, queue and context.
         for skill in skills:
             if skill in covered_skills:
                 continue
-            actor_id = f"agent-{provider_slug}-{skill}"
-            runtime_profile = AgentProfile(
-                agent_id=actor_id, name=f"{provider_id} {skill} agent", skills=(skill,),
-                endpoint=f"api+{base_url}", max_load=2, reliability=0.95,
-                tier=ExecutionTier.CLOUD, labels=(provider_id, "real-api", "main-chain", "auto-fallback"),
-            )
-            self.registry_bridge.register(
-                runtime_profile, permissions=("*",),
-                adapter=DeepSeekAgent(actor_id, role=skill, context_provider=self.prepare_agent_context),
-            )
-            existing.add(actor_id)
+            if skill == "requirement_baseline":
+                # Served deterministically on-device; the multi-skill standby
+                # below remains the failover if that Agent goes offline.
+                continue
+            instances = self._pool_size(skill, demand.get(skill, 1))
+            for index in range(1, instances + 1):
+                actor_id = f"agent-{provider_slug}-{skill}-{index:02d}"
+                runtime_profile = AgentProfile(
+                    agent_id=actor_id,
+                    name=f"{provider_id} {skill} agent #{index}",
+                    skills=(skill,),
+                    endpoint=f"api+{base_url}",
+                    # One concurrent task per instance: parallelism comes from
+                    # having several instances, which is what makes them visible
+                    # as a competing group instead of one saturated worker.
+                    max_load=1,
+                    reliability=0.95,
+                    tier=ExecutionTier.CLOUD,
+                    labels=(provider_id, "real-api", "main-chain", "role-pool", skill, f"instance-{index:02d}"),
+                )
+                kinds = self._delivery_kinds_for(skill, delivery_kinds_by_skill)
+                self.registry_bridge.register(
+                    runtime_profile,
+                    # Scoped, not "*": a report Agent cannot run a build, so the
+                    # scheduler's permission filter is a real routing constraint
+                    # and a mis-routed task fails closed at ToolRuntime.
+                    permissions=self._permissions_for(kinds),
+                    # Later instances cost marginally more, so the solver has a
+                    # deterministic preference order while every instance stays
+                    # genuinely selectable when earlier ones are busy or offline.
+                    fixed_cost=0.05 * (index - 1),
+                    adapter=ToolPlanningAgent(
+                        actor_id, role=skill, delivery_kinds=kinds,
+                        context_provider=self.prepare_agent_context,
+                    ),
+                    metadata={"delivery_kinds": list(kinds)},
+                )
+                existing.add(actor_id)
+                pool_members.append(actor_id)
 
-        generalist_id = f"agent-{provider_slug}-generalist"
-        # Capability profiles may persist in SQLite across runs, but execution
-        # adapters are intentionally process-local. Re-registering is therefore
-        # required on every new MainChain process so the scheduler can never
-        # select a persisted Agent without a live execution adapter.
+        # Multi-skill standby: only reached when the primary role pool is
+        # saturated or offline, which is exactly the failover path the console
+        # visualizes.
+        standby_id = f"agent-{provider_slug}-generalist-standby-01"
         runtime_profile = AgentProfile(
-            agent_id=generalist_id, name=f"{provider_id} multi-skill fallback",
-            skills=tuple(skills), endpoint=f"api+{base_url}", max_load=1, reliability=0.90,
-            tier=ExecutionTier.CLOUD, labels=(provider_id, "real-api", "main-chain", "fallback"),
+            agent_id=standby_id, name=f"{provider_id} multi-skill standby",
+            skills=tuple(skills), endpoint=f"api+{base_url}", max_load=2, reliability=0.90,
+            tier=ExecutionTier.CLOUD, labels=(provider_id, "real-api", "main-chain", "standby"),
         )
+        standby_kinds = tuple(sorted({
+            kind for skill in skills
+            for kind in self._delivery_kinds_for(skill, delivery_kinds_by_skill)
+        }))
         self.registry_bridge.register(
-            runtime_profile, permissions=("*",), fixed_cost=5.0,
-            adapter=DeepSeekAgent(generalist_id, role="generalist", context_provider=self.prepare_agent_context),
+            runtime_profile,
+            # The standby covers every role in the pool, so it holds the union of
+            # their permissions — that is exactly what makes it a usable failover.
+            permissions=self._permissions_for(standby_kinds),
+            fixed_cost=5.0,
+            adapter=ToolPlanningAgent(
+                standby_id, role="generalist", delivery_kinds=standby_kinds,
+                context_provider=self.prepare_agent_context,
+            ),
+            metadata={"delivery_kinds": list(standby_kinds)},
         )
-        existing.add(generalist_id)
+        existing.add(standby_id)
+        pool_members.append(standby_id)
+
+        # Device-tier Agents. These never contact a provider, so they are the
+        # only Agents allowed to touch restricted/secret work packages.
+        requirement_agent_id = "agent-local-requirement-compiler"
+        self.registry_bridge.register(
+            AgentProfile(
+                agent_id=requirement_agent_id, name="on-device requirement compiler",
+                skills=("requirement_baseline",), endpoint="local://requirement-compiler", max_load=2,
+                reliability=0.99, tier=ExecutionTier.DEVICE,
+                labels=("local", "deterministic", "device-tier", "requirement-baseline"),
+            ),
+            permissions=("*",),
+            adapter=RequirementBaselineAgent(
+                requirement_agent_id, context_provider=self.prepare_agent_context
+            ),
+        )
+        existing.add(requirement_agent_id)
+        pool_members.append(requirement_agent_id)
+
+        privacy_agent_id = "agent-local-private-executor-01"
+        self.registry_bridge.register(
+            AgentProfile(
+                agent_id=privacy_agent_id, name="on-device private executor",
+                skills=tuple(skills), endpoint="local://private-executor", max_load=2,
+                reliability=0.92, tier=ExecutionTier.DEVICE,
+                labels=("local", "deterministic", "device-tier", "privacy-restricted"),
+            ),
+            permissions=("*",),
+            # Costlier than a cloud Agent so it is chosen for privacy reasons,
+            # not by accident, while remaining the only legal option once the
+            # cloud/edge pools reject the task's privacy level.
+            fixed_cost=2.0,
+            adapter=LocalDeterministicAgent(
+                privacy_agent_id, role="private-executor", context_provider=self.prepare_agent_context
+            ),
+            metadata={
+                "only_privacy_levels": ["restricted", "secret"],
+                "scheduling_policy": (
+                    "reserved for privacy-restricted work packages; it must not absorb "
+                    "unrestricted overflow in place of a model-backed Agent"
+                ),
+            },
+        )
+        existing.add(privacy_agent_id)
+        pool_members.append(privacy_agent_id)
 
         provider_model_id = f"{provider_slug}-model"
         if provider_model_id not in existing:
@@ -305,14 +518,27 @@ class MosaicMainChain:
                 capabilities=frozenset({"*"}), permissions=frozenset({"*"}), reliability=0.99,
             ))
             existing.add("task")
-        if "local-device" not in existing:
-            self.execution.register_actor(CapabilityProfile(
-                actor_id="local-device", kind=ActorKind.DEVICE, task_types=frozenset({"*"}),
-                capabilities=frozenset({"*"}), permissions=frozenset({"*"}), reliability=0.99,
-                capacity=max(4, len(skills) + 1), device_location="local",
-                metadata={"allowed_privacy_levels": ["normal", "public", "internal", "confidential", "restricted"]},
-            ))
-            existing.add("local-device")
+        self._register_resource_pools(agent_count=len(pool_members))
+        self.execution.events.append_event(
+            "AGENT_POOL_REGISTERED",
+            self._active_run_id or "bootstrap",
+            actor_id="agent-pool-builder",
+            payload={
+                "required_skill_demand": dict(demand),
+                "instances_per_role": {
+                    skill: self._pool_size(skill, demand.get(skill, 1))
+                    for skill in skills if skill not in covered_skills
+                },
+                "agent_ids": sorted(pool_members),
+                "agent_count": len(pool_members),
+                "resource_pools": [pool["actor_id"] for pool in self._RESOURCE_POOLS],
+                "rule": (
+                    "each required role is instantiated at least AGENT_POOL_MIN_INSTANCES times so "
+                    "same-role Agents compete for work; device-tier Agents are deterministic and "
+                    "handle privacy-restricted packages without network egress"
+                ),
+            },
+        )
 
     def replace_model(self, actor_id: str, new_model_id: str) -> None:
         """Replace the model that the bound adapter will actually request.
@@ -421,8 +647,12 @@ class MosaicMainChain:
         )
         contract = topology_snapshot_contract(result.snapshot)
         previous = self._topology_history[-1] if self._topology_history else None
-        self._topology_history.append(contract)
         changed = bool(result.added or result.removed) or previous is None or previous.get("version") != contract.get("version")
+        # Only distinct versions enter the replay timeline. Appending on every
+        # sync produced runs of identical frames, which made scrubbing the
+        # topology look stuck even though the graph really had changed.
+        if changed:
+            self._topology_history.append(contract)
         if changed:
             self.execution.events.append_event(
                 "TOPOLOGY_REBUILT",
@@ -511,6 +741,28 @@ class MosaicMainChain:
             sender = parent.assignment.agent_id
             receiver = assignment.agent_id
             if sender == receiver:
+                # No message is emitted because both ends are the same Agent
+                # instance, which already holds the result in its own context.
+                # Record the decision anyway: silently skipping it is what made
+                # the console show "Messages = 0" with no way to tell an elided
+                # handoff apart from a communication failure.
+                self._communication_decisions.append({
+                    "message_id": None,
+                    "sender": sender,
+                    "receiver": receiver,
+                    "task_id": task.task_id,
+                    "node_id": task.task_id,
+                    "priority": max(1, min(10, task.priority)),
+                    "ttl": None,
+                    "summary": None,
+                    "policy_action": "INTERNAL",
+                    "policy_reason": (
+                        f"parent {parent_id} and child {task.task_id} are executed by the same Agent "
+                        f"instance {sender}; the handoff is intra-Agent and needs no network message"
+                    ),
+                    "delivered": False,
+                    "queue_wait_ms": None,
+                })
                 continue
             parent_summary = parent.result.output if parent.result and parent.result.output else parent.description
             evidence_refs = tuple(
@@ -665,8 +917,19 @@ class MosaicMainChain:
             for skill in node.get("required_skills", (node.get("required_skill"),))
             if skill
         ]
+        # Which delivery kinds each role actually has to serve in *this* DAG.
+        # Permissions are granted from the compiled plan rather than a static
+        # table, so a node can never end up with no permitted executor.
+        delivery_kinds_by_skill: dict[str, set[str]] = {}
+        for node in plan:
+            kind = str(node.get("delivery_kind") or node.get("metadata", {}).get("delivery_kind") or "")
+            if not kind:
+                continue
+            for skill in node.get("required_skills", (node.get("required_skill"),)):
+                if skill:
+                    delivery_kinds_by_skill.setdefault(str(skill), set()).add(kind)
         if auto_register_deepseek_resources:
-            self.register_default_deepseek_resources(required_skills)
+            self.register_default_deepseek_resources(required_skills, delivery_kinds_by_skill)
 
         run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
         self._active_run_id = run_id
@@ -725,6 +988,7 @@ class MosaicMainChain:
             verification_results=verification_results(events),
             evidence_manifest=evidence_manifest(tasks),
             topology_snapshot=final_topology,
+            topology_history=list(self._topology_history),
             communication=list(self._communication),
             context_packs=dict(self._context_packs),
             memory_metrics=self.memory.export_metrics(),

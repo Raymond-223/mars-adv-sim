@@ -6,6 +6,8 @@ import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from ..recovery import RecoveryEngine
+from ..verifier import VerifierService
 from .adapters.local_tool_executor import LocalToolExecutor
 from .adapters.postgres import MemoryDatabase, PostgresDatabase
 from .adapters.sqlite import SQLiteDatabase
@@ -19,8 +21,6 @@ from .orchestrator import Orchestrator
 from .posterior import BetaPosteriorUpdater
 from .scheduler import Scheduler
 from .tool_runtime import ToolRuntime
-from ..verifier import VerifierService
-from ..recovery import RecoveryEngine
 
 
 class ExecutionSchedulerService:
@@ -64,6 +64,8 @@ class ExecutionSchedulerService:
             verifier=self.verifier,
             recovery=self.recovery,
             max_task_retries=self.settings.max_task_retries,
+            capabilities=self.capabilities,
+            max_concurrency=self.settings.provider_max_concurrency,
         )
 
     @classmethod

@@ -11,7 +11,7 @@ from ..agent_runtime.edge_cloud import (
     ModelPartitionPolicy,
 )
 from .config import Settings
-from .models import ActorKind, CapabilityProfile, TaskNodeView
+from .models import CapabilityProfile, TaskNodeView
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,18 @@ class CostModel:
         allowed_privacy = (profile.metadata or {}).get("allowed_privacy_levels")
         if allowed_privacy and task.privacy_level not in set(allowed_privacy):
             return False, f"{profile.actor_id} rejects privacy level {task.privacy_level}"
+
+        # Inverse of ``allowed_privacy_levels``: an actor that exists *only* to
+        # serve a privacy class must not be picked up as generic overflow when
+        # the ordinary pool is saturated.  The on-device deterministic executor
+        # uses this so restricted work stays local without it silently replacing
+        # a model-backed Agent on unrestricted work.
+        only_privacy = (profile.metadata or {}).get("only_privacy_levels")
+        if only_privacy and task.privacy_level not in set(only_privacy):
+            return False, (
+                f"{profile.actor_id} is reserved for privacy levels "
+                f"{sorted(set(only_privacy))} and task is {task.privacy_level}"
+            )
 
 
         if enforce_location and task.data_location:
@@ -128,6 +140,23 @@ class CostModel:
                 reasons.append("restricted/secret task requires data_location")
             elif device.device_location != task.data_location:
                 reasons.append(f"{device.actor_id} violates privacy/data-location policy")
+
+        # ``allowed_tiers`` is declared by GoalSpec/ToDAG placement metadata and
+        # used to be recorded but never enforced, so a task that said "device or
+        # edge only" could still be scheduled into the cloud.
+        allowed_tiers = (task.resource_requirements or {}).get("allowed_tiers")
+        if isinstance(allowed_tiers, (list, tuple, set)) and allowed_tiers:
+            permitted = {str(item).casefold() for item in allowed_tiers}
+            resource_tier = str(device.device_location or "").casefold()
+            if resource_tier in {"device", "edge", "cloud"} and resource_tier not in permitted:
+                reasons.append(
+                    f"{device.actor_id} tier={resource_tier} is outside task allowed_tiers={sorted(permitted)}"
+                )
+            agent_tier_declared = str((agent.metadata or {}).get("tier", agent.device_location or "")).casefold()
+            if agent_tier_declared in {"device", "edge", "cloud"} and agent_tier_declared not in permitted:
+                reasons.append(
+                    f"{agent.actor_id} tier={agent_tier_declared} is outside task allowed_tiers={sorted(permitted)}"
+                )
 
         if reasons:
             return CostEvaluation(False, float("inf"), reasons=tuple(dict.fromkeys(reasons)))

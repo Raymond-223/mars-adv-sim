@@ -21,6 +21,8 @@ class ConsoleDataSource:
         "topology",
         "communication",
         "scheduler",
+        "scheduling",
+        "performance",
         "memory",
         "recovery",
         "evidence",
@@ -47,10 +49,49 @@ class ConsoleDataSource:
             return None
         return raw if isinstance(raw, dict) else None
 
+    def _latest_pointer(self) -> dict[str, Any] | None:
+        return self._read(self.directory / "latest.json")
+
     def snapshot(self, run_id: str | None = None) -> dict[str, Any] | None:
         if run_id:
             return self._read(self.runs_dir / f"{self._safe_run_name(run_id)}.json")
-        return self._read(self.directory / "latest.json")
+        pointer = self._latest_pointer()
+        if pointer is None:
+            return None
+        # ``latest.json`` is a small pointer in the current store; older stores
+        # wrote the whole snapshot there and must still be readable.
+        if pointer.get("schema_version") != "mosaic-console-latest-v2":
+            return pointer
+        target = str(pointer.get("run_id") or "")
+        return self._read(self.runs_dir / f"{self._safe_run_name(target)}.json") if target else None
+
+    def freshness(self, run_id: str | None = None) -> dict[str, Any] | None:
+        """Cheap change signal for streaming: never parses a full snapshot.
+
+        The SSE loop only needs to know *that* runtime state changed. Reading the
+        multi-megabyte run snapshot twice a second just to compare one timestamp
+        was pure overhead on every active run.
+        """
+        if run_id:
+            path = self.runs_dir / f"{self._safe_run_name(run_id)}.json"
+            if not path.is_file():
+                return None
+            stat_result = path.stat()
+            return {
+                "run_id": run_id,
+                "generated_at": stat_result.st_mtime,
+                "size_bytes": stat_result.st_size,
+            }
+        pointer = self._latest_pointer()
+        if pointer is None:
+            return None
+        run = pointer.get("run", {}) if isinstance(pointer.get("run"), dict) else {}
+        return {
+            "run_id": pointer.get("run_id") or run.get("run_id"),
+            "generated_at": pointer.get("generated_at"),
+            "phase": pointer.get("phase"),
+            "status": run.get("status"),
+        }
 
     def section(self, name: str, run_id: str | None = None) -> Any:
         if name not in self.SECTIONS:
@@ -61,6 +102,14 @@ class ConsoleDataSource:
         return snapshot.get(name)
 
     def runs(self) -> list[dict[str, Any]]:
+        # Prefer the compact index: listing runs used to deserialize every full
+        # snapshot on the disk just to read four header fields, which grew with
+        # both run count and run size.
+        index = self._read(self.directory / "index.json")
+        if isinstance(index, dict) and index:
+            rows = [dict(value) for value in index.values() if isinstance(value, dict)]
+            rows.sort(key=lambda item: float(item.get("generated_at") or 0.0), reverse=True)
+            return [{k: v for k, v in row.items() if k != "file"} for row in rows]
         if not self.runs_dir.is_dir():
             return []
         items: list[dict[str, Any]] = []

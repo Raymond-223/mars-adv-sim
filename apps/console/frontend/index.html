@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light">
   <title>MOSAIC-Ω</title>
   <link rel="stylesheet" href="assets/style.css">
+  <link rel="stylesheet" href="assets/board.css">
 </head>
 <body>
   <div class="app-shell">
@@ -21,6 +22,7 @@
         <button type="button" class="nav-item" data-view="tasks"><span class="nav-icon">▣</span><span>任务</span></button>
         <button type="button" class="nav-item" data-view="deliverables"><span class="nav-icon">▤</span><span>结果</span></button>
         <button type="button" class="nav-item" data-view="agents"><span class="nav-icon">◇</span><span>智能体</span></button>
+        <button type="button" class="nav-item" data-view="board"><span class="nav-icon">◈</span><span>调度看板</span></button>
 
         <div class="nav-label nav-label-gap">更多</div>
         <button type="button" class="nav-item judge-entry" data-view="judge"><span class="nav-icon">⌘</span><span class="judge-entry-copy"><strong>技术透视</strong><small>DAG · 调度 · 协作 · 证据</small></span></button>
@@ -218,6 +220,112 @@
         </div>
       </section>
 
+      <section id="view-board" class="view">
+        <div class="page-intro">
+          <div><span class="section-kicker">LIVE SCHEDULING</span><h2>动态调度看板</h2>
+          <p>任务队列、同类 Agent 竞争、实时负载与端边云资源池。所有动画只在观察到真实后端状态变化时触发；没有装饰性循环动效。</p></div>
+          <div id="boardRoundMeta" class="observation-status"></div>
+        </div>
+
+        <div id="boardSolverStrip" class="metric-ribbon"></div>
+
+        <article class="surface board-surface">
+          <div class="surface-head">
+            <div><h3>任务 → Agent → 资源池</h3><p class="subtle">左：等待中的任务及其原因；中：同类 Agent 泳道与实时负载；右：DEVICE / EDGE / CLOUD 资源池。</p></div>
+            <span class="soft-status">SCHEDULING_ROUND 事件驱动</span>
+          </div>
+          <div class="board-grid">
+            <div class="board-col board-queues">
+              <div class="board-col-title">任务队列</div>
+              <div id="boardQueues"></div>
+            </div>
+            <div class="board-col board-lanes">
+              <div class="board-col-title">Agent 泳道 · 实时负载</div>
+              <div id="boardLanes"></div>
+            </div>
+            <div class="board-col board-pools">
+              <div class="board-col-title">端 · 边 · 云资源池</div>
+              <div id="boardPools"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="surface board-surface">
+          <div class="surface-head">
+            <div><h3>动态任务图</h3><p class="subtle">按依赖层级布局；并行任务横向展开；关键路径高亮；节点显示执行它的 Agent 实例。可拖动、缩放、按调度轮次单步回放。</p></div>
+            <span id="dagMeta" class="soft-status"></span>
+          </div>
+          <div class="dag-wrap">
+            <div class="dag-controls">
+              <button type="button" id="dagStepBack" class="ghost-button">◀ 上一轮</button>
+              <input id="dagScrub" type="range" min="0" max="0" value="0" step="1" aria-label="调度轮次">
+              <button type="button" id="dagStepFwd" class="ghost-button">下一轮 ▶</button>
+              <button type="button" id="dagLive" class="ghost-button">回到最新</button>
+              <span class="dag-spacer"></span>
+              <button type="button" id="dagZoomOut" class="icon-button" title="缩小">−</button>
+              <button type="button" id="dagZoomIn" class="icon-button" title="放大">＋</button>
+              <button type="button" id="dagFit" class="ghost-button">适应窗口</button>
+              <label class="dag-toggle"><input type="checkbox" id="dagCritical" checked> 关键路径</label>
+            </div>
+            <svg id="dagSvg" viewBox="0 0 1200 620" preserveAspectRatio="xMidYMid meet"></svg>
+            <div id="dagLegend" class="dag-legend"></div>
+          </div>
+        </article>
+
+        <article class="surface board-surface">
+          <div class="surface-head">
+            <div><h3>候选与淘汰</h3><p class="subtle">点击任意任务卡片，查看参与竞争的 Agent、成本构成、被硬约束淘汰的候选及其具体原因。</p></div>
+            <span id="boardInspectorMeta" class="soft-status"></span>
+          </div>
+          <div id="boardInspector" class="board-inspector"></div>
+        </article>
+
+        <article class="surface board-surface">
+          <div class="surface-head">
+            <div><h3>动态协作拓扑回放</h3><p class="subtle">拓扑每次重建都会保留一个版本。拖动时间轴可回放 v1 → v2 → 节点失效 → 删边 → 重路由 → 恢复连通。</p></div>
+            <span id="boardTopoMeta" class="soft-status"></span>
+          </div>
+          <div class="board-topo">
+            <div class="board-topo-controls">
+              <button type="button" id="boardTopoPrev" class="ghost-button">◀ 上一版</button>
+              <input id="boardTopoScrub" type="range" min="0" max="0" value="0" step="1" aria-label="拓扑版本">
+              <button type="button" id="boardTopoNext" class="ghost-button">下一版 ▶</button>
+              <button type="button" id="boardTopoLive" class="ghost-button">回到最新</button>
+            </div>
+            <svg id="boardTopoSvg" viewBox="0 0 900 380" preserveAspectRatio="xMidYMid meet"></svg>
+            <div id="boardTopoDetail" class="board-topo-detail"></div>
+          </div>
+        </article>
+
+        <article class="surface board-surface">
+          <div class="surface-head">
+            <div><h3>记忆选择流水线</h3><p class="subtle">全量历史 → 候选召回 → 权限/状态过滤 → 排名 → 召回上限 → 去重压缩 → ContextPack → Agent 唤醒。每一段都显示进出数量与淘汰原因。</p></div>
+            <span id="memPipeMeta" class="soft-status"></span>
+          </div>
+          <div id="memPipeline" class="mem-pipeline"></div>
+          <div class="mem-detail-grid">
+            <div>
+              <div class="board-sub">选择哪个 ContextPack</div>
+              <select id="memPackSelect" class="mem-select"></select>
+              <div id="memPackSummary" class="mem-pack-summary"></div>
+            </div>
+            <div>
+              <div class="board-sub">排名与去留</div>
+              <div id="memRanked" class="mem-ranked"></div>
+            </div>
+          </div>
+          <div id="memDropped" class="mem-dropped"></div>
+        </article>
+
+        <article class="surface board-surface">
+          <div class="surface-head">
+            <div><h3>耗时归因</h3><p class="subtle">每个阶段的真实测量墙钟时间：模型调用 / 工具执行 / 独立验证。并行执行时各任务耗时之和会大于运行总时长。</p></div>
+            <span id="boardPerfMeta" class="soft-status"></span>
+          </div>
+          <div id="boardPerf" class="board-perf"></div>
+        </article>
+      </section>
+
       <section id="view-observatory" class="view">
         <div class="page-intro observatory-intro"><div><span class="section-kicker">LIVE EXECUTION</span><h2>技术观测</h2><p>动画只在观察到真实状态变化时触发；历史数据保持静态，避免“看起来在运行”的装饰性动画。</p></div><div id="observationStatus" class="observation-status"></div></div>
 
@@ -304,5 +412,6 @@
   </div>
 
   <script src="assets/app.js"></script>
+  <script src="assets/board.js"></script>
 </body>
 </html>

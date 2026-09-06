@@ -78,6 +78,31 @@ def extract_main_goal(sentences: List[str], text: str) -> Dict[str, str]:
     }
 
 
+#: 显式验收枚举的引导词。用户写“验收条件：A；B；C”时，A/B/C 全部是验收条件，
+#: 不应该再要求每一条自己带“必须/输出”之类的关键词。之前只有恰好命中关键词的
+#: 那一条会被保留，其余直接丢失，导致 DAG 少了整段工作。
+_ACCEPTANCE_LEAD = re.compile(
+    r"^\s*(验收条件|验收标准|验收要求|交付要求|完成标准|acceptance\s+criteria|acceptance\s+conditions)\s*[:：]?\s*",
+    re.IGNORECASE,
+)
+
+
+def split_acceptance_enumeration(sentences: List[str]) -> List[str]:
+    """返回被显式验收枚举引导的所有条件文本。"""
+    for index, sentence in enumerate(sentences):
+        match = _ACCEPTANCE_LEAD.match(sentence)
+        if not match:
+            continue
+        conditions: List[str] = []
+        head = sentence[match.end():].strip(" ，,。：: \t")
+        if head:
+            conditions.append(head)
+        # 引导词之后的每一句都属于该枚举。
+        conditions.extend(item.strip(" ，,。：: \t") for item in sentences[index + 1:])
+        return [item for item in conditions if item]
+    return []
+
+
 def extract(text: str) -> Dict[str, Any]:
     """从用户自然语言中抽取 GoalSpec 草稿。"""
     if not text or not text.strip():
@@ -89,16 +114,43 @@ def extract(text: str) -> Dict[str, Any]:
     prohibitions = []
     acceptance_conditions = []
 
-    hard_keywords = ["必须", "需要", "要求", "一定", "只能", "确保", "包含", "输出", "DAG", "JSON", "json", "字段"]
+    # 显式枚举优先：先把“验收条件：…”里的每一条都收下，再走关键词兜底。
+    enumerated = split_acceptance_enumeration(sentences)
+    seen_conditions: set[str] = set()
+    for condition in enumerated:
+        if condition in seen_conditions:
+            continue
+        seen_conditions.add(condition)
+        acceptance_conditions.append({
+            "condition": condition,
+            "check_type": infer_check_method(condition),
+            "expected_result": "条件被满足",
+        })
+        hard_constraints.append({
+            "constraint": condition,
+            "checkable": True,
+            "check_method": infer_check_method(condition),
+            "source_span": condition,
+        })
+
+    hard_keywords = [
+        "必须", "需要", "要求", "一定", "只能", "确保", "包含", "输出", "DAG", "JSON", "json", "字段",
+        # 常见的陈述式要求写法，之前会被整句丢弃。
+        "完成", "实现", "通过", "生成", "交付", "达到", "支持", "修复", "构建",
+    ]
     soft_keywords = ["尽量", "最好", "希望", "优先", "方便", "适合", "正式", "简洁", "清楚", "不要太", "一点"]
     prohibition_keywords = ["不要", "不能", "不得", "禁止", "别", "不允许", "不许"]
 
     for s in sentences:
         if not s:
             continue
+        if s in seen_conditions or _ACCEPTANCE_LEAD.match(s):
+            # 已经由显式枚举处理过，不要重复登记。
+            continue
         is_prohibition = any(k in s for k in prohibition_keywords)
         is_hard = any(k in s for k in hard_keywords) or is_prohibition
         if is_hard:
+            seen_conditions.add(s)
             hard_constraints.append({
                 "constraint": s,
                 "checkable": True,

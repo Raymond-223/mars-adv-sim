@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from mosaic_omega.console_api import ConsoleDataSource
+
 from .control import CompetitionControlPlane
 
 
@@ -98,11 +99,13 @@ class ConsoleRequestHandler(BaseHTTPRequestHandler):
         started = time.monotonic()
         try:
             while time.monotonic() - started < 25.0:
-                snapshot = self.server.data_source.snapshot(run_id)
+                # Only the change signal is needed here; parsing the full snapshot
+                # on every tick made the stream cost scale with snapshot size.
+                freshness = self.server.data_source.freshness(run_id)
                 status = self.server.control.status()
                 active = status.get("active_job") if isinstance(status, dict) else None
                 signature = (
-                    snapshot.get("generated_at") if isinstance(snapshot, dict) else None,
+                    freshness.get("generated_at") if isinstance(freshness, dict) else None,
                     active.get("job_id") if isinstance(active, dict) else None,
                     active.get("status") if isinstance(active, dict) else None,
                 )

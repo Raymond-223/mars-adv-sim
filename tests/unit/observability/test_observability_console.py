@@ -25,7 +25,10 @@ def test_main_chain_writes_read_only_dashboard_snapshot(tmp_path: Path) -> None:
     assert run_snapshot.is_file()
     assert log_file.is_file()
 
-    snapshot = json.loads(latest.read_text(encoding="utf-8"))
+    # latest.json is a compact pointer; the body lives in the run file.
+    pointer = json.loads(latest.read_text(encoding="utf-8"))
+    assert pointer["run_id"] == result.run_id
+    snapshot = json.loads(run_snapshot.read_text(encoding="utf-8"))
     assert snapshot["schema_version"] == "mosaic-console-v1"
     assert snapshot["run"]["run_id"] == result.run_id
     assert snapshot["run"]["status"] == "SUCCEEDED"

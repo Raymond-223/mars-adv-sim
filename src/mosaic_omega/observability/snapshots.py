@@ -47,18 +47,65 @@ class SnapshotStore:
                 import time
                 time.sleep(0.05 * (attempt + 1))
 
+    @property
+    def index_path(self) -> Path:
+        return self.directory / "index.json"
+
     def write(self, run_id: str, snapshot: Mapping[str, Any]) -> Path:
         with self._lock:
             path = self.run_path(run_id)
             self._atomic_write(path, snapshot)
-            self._atomic_write(self.latest_path, snapshot)
+            # ``latest.json`` used to be a second full copy of a snapshot that can
+            # reach several megabytes, so every capture serialized and fsynced the
+            # whole dashboard twice.  It is now a small pointer plus the headline
+            # counters, and readers resolve the body from the run file.
+            run = snapshot.get("run", {}) if isinstance(snapshot, Mapping) else {}
+            self._atomic_write(self.latest_path, {
+                "schema_version": "mosaic-console-latest-v2",
+                "run_id": run_id,
+                "run_file": path.name,
+                "generated_at": snapshot.get("generated_at"),
+                "phase": snapshot.get("phase"),
+                "run": dict(run) if isinstance(run, Mapping) else {},
+            })
+            self._write_index(run_id, snapshot, path)
             return path
+
+    def _write_index(self, run_id: str, snapshot: Mapping[str, Any], path: Path) -> None:
+        """Maintain a compact run index so listing runs never parses full snapshots."""
+        index: dict[str, Any] = {}
+        if self.index_path.is_file():
+            try:
+                raw = json.loads(self.index_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    index = raw
+            except (OSError, json.JSONDecodeError):
+                index = {}
+        run = snapshot.get("run", {}) if isinstance(snapshot, Mapping) else {}
+        index[run_id] = {
+            "run_id": run_id,
+            "status": run.get("status", "UNKNOWN") if isinstance(run, Mapping) else "UNKNOWN",
+            "generated_at": snapshot.get("generated_at"),
+            "phase": snapshot.get("phase"),
+            "file": path.name,
+        }
+        self._atomic_write(self.index_path, index)
 
     def read_latest(self) -> dict[str, Any] | None:
         with self._lock:
             if not self.latest_path.exists():
                 return None
-            return json.loads(self.latest_path.read_text(encoding="utf-8"))
+            try:
+                pointer = json.loads(self.latest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return None
+            if not isinstance(pointer, dict):
+                return None
+            # Pre-v2 stores wrote the whole snapshot here; keep reading those.
+            if pointer.get("schema_version") != "mosaic-console-latest-v2":
+                return pointer
+            run_id = str(pointer.get("run_id") or "")
+            return self.read_run(run_id) if run_id else None
 
     def read_run(self, run_id: str) -> dict[str, Any] | None:
         with self._lock:

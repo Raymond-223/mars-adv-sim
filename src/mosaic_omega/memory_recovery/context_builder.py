@@ -62,11 +62,57 @@ class ContextBuilder:
         for record in records:
             self._add_record(pack, record)
 
+        before_dedupe = self._bucket_sizes(pack)
         self._dedupe_pack(pack)
+        after_dedupe = self._bucket_sizes(pack)
+        before_limits = dict(after_dedupe)
         self._apply_item_limits(pack)
+        after_limits = self._bucket_sizes(pack)
+        tokens_before_budget = estimate_tokens(_serialized(pack))
         self._truncate_optional_content(pack)
         pack.token_estimate = estimate_tokens(_serialized(pack))
+
+        trace = dict(recalled.get("trace") or {})
+        # Compression is the last stage of the pipeline and is reported with the
+        # same granularity as retrieval, so a reviewer can see exactly which
+        # buckets shrank and why.
+        trace["compression"] = {
+            "deduplicated": {
+                key: before_dedupe[key] - after_dedupe[key]
+                for key in before_dedupe if before_dedupe[key] != after_dedupe[key]
+            },
+            "item_limit_dropped": {
+                key: before_limits[key] - after_limits[key]
+                for key in before_limits if before_limits[key] != after_limits[key]
+            },
+            "budget_dropped": {
+                key: after_limits[key] - self._bucket_sizes(pack)[key]
+                for key in after_limits if after_limits[key] != self._bucket_sizes(pack)[key]
+            },
+            "token_estimate_before_budget": tokens_before_budget,
+            "token_estimate_final": pack.token_estimate,
+            "truncated": bool(pack.truncated),
+            "budget": {
+                "max_tokens": self.config.context_pack_max_tokens,
+                "max_chars": self.config.context_pack_max_chars,
+            },
+        }
+        trace["final_pack_sizes"] = self._bucket_sizes(pack)
+        pack.selection_trace = trace
         return pack
+
+    @staticmethod
+    def _bucket_sizes(pack: ContextPack) -> dict:
+        return {
+            "hard_constraints": len(pack.hard_constraints),
+            "prohibitions": len(pack.prohibitions),
+            "relevant_facts": len(pack.relevant_facts),
+            "previous_results": len(pack.previous_results),
+            "evidence_refs": len(pack.evidence_refs),
+            "relevant_experiences": len(pack.relevant_experiences),
+            "procedures": len(pack.procedures),
+            "memory_ids": len(pack.memory_ids),
+        }
 
     def build_with_awakening(
         self,

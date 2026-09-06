@@ -103,6 +103,47 @@ def _recovery_events(events: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     return [event for event in events if _event_type(event).upper() in recovery_types]
 
 
+LOCAL_TRANSPORTS = frozenset({"local_process"})
+
+
+def _is_local_execution(provenance: Mapping[str, Any]) -> bool:
+    """Whether this execution record describes on-device work with no provider call.
+
+    Device-tier deterministic Agents record provenance for traceability, but
+    counting them as model API requests would inflate the request/token numbers
+    and hide the fact that no inference happened.
+    """
+    if provenance.get("network_egress") is False:
+        return True
+    return str(provenance.get("transport") or "") in LOCAL_TRANSPORTS
+
+
+def _local_executions(events: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        if _event_type(event) != "TOOL_EXECUTED":
+            continue
+        call = _payload(event).get("tool_call", {})
+        if not isinstance(call, Mapping):
+            continue
+        arguments = call.get("arguments", {})
+        if not isinstance(arguments, Mapping):
+            continue
+        provenance = arguments.get("api_provenance")
+        if not isinstance(provenance, Mapping) or not _is_local_execution(provenance):
+            continue
+        rows.append({
+            "event_id": event.get("event_id"),
+            "task_id": _event_task_id(event),
+            "actor_id": event.get("actor_id"),
+            "tool_name": call.get("tool_name"),
+            "execution_semantics": provenance.get("execution_semantics", "deterministic_local_compilation"),
+            "network_egress": False,
+            "source_path": "events[TOOL_EXECUTED].payload.tool_call.arguments.api_provenance",
+        })
+    return rows
+
+
 def _api_calls(events: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     calls: list[dict[str, Any]] = []
     for event in events:
@@ -117,6 +158,8 @@ def _api_calls(events: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         provenance = arguments.get("api_provenance")
         if not isinstance(provenance, Mapping):
+            continue
+        if _is_local_execution(provenance):
             continue
         usage = provenance.get("usage", {})
         calls.append({
@@ -173,6 +216,12 @@ def _execution_semantics(events: Sequence[dict[str, Any]]) -> dict[str, Any]:
     requires at least one successful concrete tool call (read/write/shell/build/test
     or another non-``task`` ToolRuntime tool) instead of treating text generation
     as physical/software execution.
+
+    The same rule applies to a ``write_file`` whose content is the planning
+    Agent's own text: wrapping generated prose in a file write does not turn it
+    into software or device execution.  Such calls carry ``api_provenance``
+    (provider or local compiler authorship), which is how they are told apart
+    from a tool call that genuinely acts on the environment.
     """
     rows: list[dict[str, Any]] = []
     for event in events:
@@ -185,16 +234,27 @@ def _execution_semantics(events: Sequence[dict[str, Any]]) -> dict[str, Any]:
             continue
         tool_name = str(call.get("tool_name") or "").strip() or "UNKNOWN"
         success = bool(result.get("success")) if isinstance(result, Mapping) else False
+        arguments = call.get("arguments", {}) if isinstance(call.get("arguments"), Mapping) else {}
+        intent = str(arguments.get("execution_intent") or "").strip()
+        if intent:
+            # The adapter declared what this call is. Trust the declaration.
+            authored_by_planner = intent == "persist_planner_output"
+        else:
+            # Legacy events without a declaration: a call carrying planner
+            # provenance is persisting planner output.
+            authored_by_planner = isinstance(arguments.get("api_provenance"), Mapping)
         rows.append({
             "event_id": event.get("event_id"),
             "task_id": _event_task_id(event),
             "actor_id": event.get("actor_id"),
             "tool_name": tool_name,
             "success": success,
+            "execution_intent": intent or ("persist_planner_output" if authored_by_planner else "act_on_environment"),
+            "persists_planner_output": authored_by_planner,
             "source": "EventStore TOOL_EXECUTED.payload.tool_call/result",
         })
-    reasoning = [row for row in rows if row["tool_name"] == "task"]
-    concrete = [row for row in rows if row["tool_name"] != "task"]
+    reasoning = [row for row in rows if row["tool_name"] == "task" or row["persists_planner_output"]]
+    concrete = [row for row in rows if not (row["tool_name"] == "task" or row["persists_planner_output"])]
     successful_concrete = [row for row in concrete if row["success"]]
     if successful_concrete:
         verdict = "CONCRETE_TOOL_EXECUTION_VERIFIED"
@@ -213,9 +273,232 @@ def _execution_semantics(events: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "concrete_tools": sorted({str(row["tool_name"]) for row in concrete}),
         "calls": rows,
         "rule": (
-            "tool_name=task is reasoning output persisted as a deliverable; it does not count as concrete "
-            "software/device execution. Judge closed-loop evidence requires successful non-task ToolRuntime execution."
+            "tool_name=task, and any tool call that merely persists the planning Agent's own output "
+            "(identified by api_provenance on the ToolCall), is reasoning output persisted as a deliverable; "
+            "it does not count as concrete software/device execution. Judge closed-loop evidence requires a "
+            "successful ToolRuntime call that acts on the environment."
         ),
+    }
+
+
+def _graph_layers(
+    nodes: Sequence[Mapping[str, Any]],
+    edges: Sequence[Mapping[str, str]],
+) -> dict[str, int]:
+    """Longest-path depth per node, so a DAG can be drawn in dependency layers.
+
+    A flat row of boxes cannot show which work is parallel; the layer index is
+    what makes "these four tasks run at the same time" visible.
+    """
+    parents: dict[str, list[str]] = {str(n["id"]): [] for n in nodes}
+    for edge in edges:
+        target, source = str(edge.get("target")), str(edge.get("source"))
+        if target in parents and source in parents:
+            parents[target].append(source)
+    level: dict[str, int] = {}
+
+    def depth(node_id: str, seen: frozenset[str]) -> int:
+        if node_id in level:
+            return level[node_id]
+        if node_id in seen:  # defensive: the execution graph is acyclic
+            return 0
+        value = 0
+        for parent in parents.get(node_id, ()):
+            value = max(value, depth(parent, seen | {node_id}) + 1)
+        level[node_id] = value
+        return value
+
+    for node in nodes:
+        depth(str(node["id"]), frozenset())
+    return level
+
+
+def _critical_path(
+    nodes: Sequence[Mapping[str, Any]],
+    edges: Sequence[Mapping[str, str]],
+    durations: Mapping[str, float],
+) -> list[str]:
+    """Longest measured-duration path through the DAG.
+
+    Weighted by real per-task wall clock when available, so the highlighted path
+    is the one that actually determined how long the run took, not a guess.
+    """
+    parents: dict[str, list[str]] = {str(n["id"]): [] for n in nodes}
+    for edge in edges:
+        target, source = str(edge.get("target")), str(edge.get("source"))
+        if target in parents and source in parents:
+            parents[target].append(source)
+    best: dict[str, tuple[float, list[str]]] = {}
+
+    def walk(node_id: str, seen: frozenset[str]) -> tuple[float, list[str]]:
+        if node_id in best:
+            return best[node_id]
+        if node_id in seen:
+            return 0.0, []
+        own = float(durations.get(node_id, 0.0) or 0.0)
+        chain: list[str] = []
+        total = 0.0
+        for parent in parents.get(node_id, ()):
+            weight, path = walk(parent, seen | {node_id})
+            if weight >= total:
+                total, chain = weight, path
+        best[node_id] = (total + own, [*chain, node_id])
+        return best[node_id]
+
+    winner: tuple[float, list[str]] = (0.0, [])
+    for node in nodes:
+        candidate = walk(str(node["id"]), frozenset())
+        if candidate[0] > winner[0]:
+            winner = candidate
+    return winner[1]
+
+
+def _phase_timing_summary(events: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate measured per-phase wall clock so slowness can be attributed.
+
+    Without this the console could only report a total run duration, which made
+    it impossible to tell a slow model provider apart from slow tool execution
+    or slow verification.
+    """
+    per_task: list[dict[str, Any]] = []
+    totals: dict[str, float] = {}
+    for event in events:
+        if _event_type(event) != "TASK_PHASE_TIMING":
+            continue
+        payload = _payload(event)
+        timings = payload.get("timings_ms", {})
+        if not isinstance(timings, Mapping):
+            continue
+        row = {
+            "task_id": _event_task_id(event),
+            "agent_id": payload.get("agent_id"),
+            "timings_ms": {str(k): float(v) for k, v in timings.items() if isinstance(v, (int, float))},
+        }
+        per_task.append(row)
+        for key, value in row["timings_ms"].items():
+            totals[key] = totals.get(key, 0.0) + value
+    slowest = sorted(per_task, key=lambda item: item["timings_ms"].get("total_ms", 0.0), reverse=True)
+    wall = totals.get("total_ms", 0.0)
+    return {
+        "sample_count": len(per_task),
+        "totals_ms": {key: round(value, 3) for key, value in sorted(totals.items())},
+        "share_of_task_time": {
+            key: round(value / wall, 4)
+            for key, value in sorted(totals.items())
+            if wall > 0 and key != "total_ms"
+        },
+        "slowest_tasks": slowest[:10],
+        "measurement": (
+            "wall clock measured inside Orchestrator._execute_assignment; totals sum across tasks and "
+            "therefore exceed run duration when tasks execute in parallel"
+        ),
+    }
+
+
+def _scheduling_rounds(events: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every explainable scheduler decision in this run, oldest first."""
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        if _event_type(event) != "SCHEDULING_ROUND":
+            continue
+        payload = _payload(event)
+        payload["event_id"] = event.get("event_id")
+        payload["timestamp"] = event.get("timestamp", event.get("occurred_at"))
+        rows.append(payload)
+    return rows
+
+
+def _latest_task_scheduling(rounds: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for record in rounds:
+        for task in record.get("tasks", []) or []:
+            if isinstance(task, Mapping) and task.get("task_id"):
+                latest[str(task["task_id"])] = dict(task) | {
+                    "round_index": record.get("round_index"),
+                    "solver_status": record.get("solver_status"),
+                    "observed_at": record.get("timestamp"),
+                }
+    return latest
+
+
+#: Scheduling-lifecycle labels shown to the user.  The point of this vocabulary
+#: is that "not running" is never rendered as one undifferentiated ``未分配``:
+#: waiting on a dependency, waiting for capacity and having no legal executor are
+#: three different situations with three different remedies.
+SCHEDULING_STATES = (
+    "BLOCKED",              # dependencies have not all succeeded yet
+    "CANDIDATE_READY",      # READY, feasible candidates found, not yet solved
+    "QUEUED",               # feasible but no Agent/resource slot this round
+    "NO_FEASIBLE_AGENT",    # every candidate eliminated by a hard constraint
+    "ASSIGNED",             # committed Assignment exists, execution not started
+    "RUNNING",
+    "VERIFYING",
+    "REASSIGNING",          # recovery is re-solving after a failure/offline Agent
+    "SUCCEEDED",
+    "FAILED",
+    "PAUSED",
+)
+
+
+def _scheduling_state(
+    task: Mapping[str, Any],
+    *,
+    task_states: Mapping[str, str],
+    diagnostic: Mapping[str, Any] | None,
+    reassigning: bool,
+) -> dict[str, Any]:
+    """Resolve one task's scheduling-lifecycle state and the reason for it."""
+    status = _status(task)
+    if status in {"SUCCEEDED", "FAILED", "PAUSED", "RUNNING", "VERIFYING"}:
+        return {
+            "state": status,
+            "reason": f"authoritative task state is {status}",
+            "source": "EventStore task projection",
+        }
+    if reassigning:
+        return {
+            "state": "REASSIGNING",
+            "reason": "recovery returned this task to the scheduler after a failure or Agent going offline",
+            "source": "EventStore recovery events",
+        }
+    if status == "PLANNED":
+        pending = [
+            str(parent) for parent in (task.get("predecessors") or task.get("depends_on") or [])
+            if task_states.get(str(parent)) != "SUCCEEDED"
+        ]
+        return {
+            "state": "BLOCKED",
+            "reason": (
+                f"waiting for {len(pending)} dependency task(s) to succeed: {pending[:6]}"
+                if pending else "planned but not yet released by the orchestrator"
+            ),
+            "blocking_task_ids": pending,
+            "source": "task graph dependencies + EventStore task states",
+        }
+    if status == "READY":
+        if diagnostic is None:
+            return {
+                "state": "CANDIDATE_READY",
+                "reason": "READY and awaiting the next scheduling round; no solver decision recorded yet",
+                "source": "EventStore task state",
+            }
+        state = str(diagnostic.get("state") or "QUEUED")
+        if state == "ASSIGNED":
+            # The solver committed a bundle but the task projection has not moved
+            # to RUNNING yet.
+            state = "ASSIGNED"
+        return {
+            "state": state if state in SCHEDULING_STATES else "QUEUED",
+            "reason": str(diagnostic.get("reason") or ""),
+            "candidate_count": diagnostic.get("candidate_count", 0),
+            "rejected_count": diagnostic.get("rejected_count", 0),
+            "round_index": diagnostic.get("round_index"),
+            "source": "Scheduler SCHEDULING_ROUND diagnostic",
+        }
+    return {
+        "state": status,
+        "reason": f"task state {status} has no scheduling interpretation",
+        "source": "EventStore task projection",
     }
 
 
@@ -307,6 +590,23 @@ def _authenticity(
         )
     ]
 
+    # Device-tier deterministic Agents are a declared part of the heterogeneous
+    # architecture, not an unclassified mix: they run locally on purpose so that
+    # privacy-restricted work and already-compiled requirement baselines never
+    # need a provider call.  They are listed explicitly so a reviewer can see
+    # exactly which nodes did not use a model.
+    local_deterministic = [item["actor_id"] for item in details if item["mode"] == "deterministic_tool_executor"]
+    real_api_agents = [item["actor_id"] for item in details if item["mode"] == "real_api"]
+    real_api_clean = (
+        bool(real_api_agents)
+        and not missing_api
+        and bool(api_calls)
+        and not bad_real_provenance
+        and not missing_request_id
+        and not unverified_official_endpoint
+        and not endpoint_mismatch
+    )
+
     if mock:
         verdict = "MOCK_EXECUTION"
     elif unbound:
@@ -317,17 +617,10 @@ def _authenticity(
         verdict = "TEST_FIXTURE_NOT_COMPETITION_STRICT"
     elif test_endpoint:
         verdict = "API_TEST_ENDPOINT_NOT_COMPETITION_STRICT"
-    elif (
-        details
-        and modes == {"real_api"}
-        and not missing_api
-        and api_calls
-        and not bad_real_provenance
-        and not missing_request_id
-        and not unverified_official_endpoint
-        and not endpoint_mismatch
-    ):
+    elif details and modes == {"real_api"} and real_api_clean:
         verdict = "REAL_API_VERIFIED"
+    elif details and modes == {"real_api", "deterministic_tool_executor"} and real_api_clean:
+        verdict = "REAL_API_AND_LOCAL_DETERMINISTIC_VERIFIED"
     elif details and modes == {"remote_rpc"}:
         verdict = "REMOTE_RPC_BOUND"
     elif details and modes == {"deterministic_tool_executor"}:
@@ -337,14 +630,21 @@ def _authenticity(
     else:
         verdict = "NO_ASSIGNED_AGENT"
 
+    local_rows = _local_executions(events)
     return {
         "verdict": verdict,
-        "competition_strict_real_agent": verdict == "REAL_API_VERIFIED",
+        "competition_strict_real_agent": verdict in {
+            "REAL_API_VERIFIED", "REAL_API_AND_LOCAL_DETERMINISTIC_VERIFIED"
+        },
         "expected_agent_mode": run_metadata.get("agent_mode"),
         "assigned_agent_count": len(assigned),
         "assigned_agents": details,
         "mock_agents": mock,
         "unbound_agents": unbound,
+        "real_api_agents": real_api_agents,
+        "local_deterministic_agents": local_deterministic,
+        "local_execution_count": len(local_rows),
+        "local_executions": local_rows,
         "real_api_missing_provenance": missing_api,
         "test_fixture_agents": test_fixture,
         "api_test_endpoint_agents": test_endpoint,
@@ -356,7 +656,9 @@ def _authenticity(
         "rule": (
             "REAL_API_VERIFIED requires all assigned agents to be explicitly bound real_api adapters, "
             "an official-provider endpoint, at least one TOOL_EXECUTED API provenance record using a real network transport, "
-            "non-empty provider request IDs, and no real_api execution lacking provenance."
+            "non-empty provider request IDs, and no real_api execution lacking provenance. "
+            "REAL_API_AND_LOCAL_DETERMINISTIC_VERIFIED additionally allows declared device-tier deterministic "
+            "Agents, whose executions are counted separately under local_executions and never as model API requests."
         ),
     }
 
@@ -367,6 +669,11 @@ def _communication_summary(
     api_usage: Mapping[str, Any],
 ) -> dict[str, Any]:
     action_counts = Counter(str(item.get("policy_action", "UNKNOWN")).upper() for item in messages)
+    # INTERNAL is an explicitly recorded intra-Agent handoff, not an inter-Agent
+    # message.  It is reported separately so a low message count can be read as
+    # "the same Agent kept the context" rather than "communication failed".
+    internal = [item for item in messages if str(item.get("policy_action", "")).upper() == "INTERNAL"]
+    routed = [item for item in messages if str(item.get("policy_action", "")).upper() != "INTERNAL"]
     token_usage = {
         "status": api_usage.get("token_status", "insufficient_data"),
         "input_total": api_usage.get("prompt_tokens"),
@@ -380,7 +687,10 @@ def _communication_summary(
         ),
     }
     return {
-        "total": len(messages),
+        "total": len(routed),
+        "decision_count": len(messages),
+        "internal_handoff_count": len(internal),
+        "internal_handoffs": internal,
         "action_counts": dict(action_counts),
         "items": list(messages),
         "queue_wait_ms": telemetry.get("queue_wait_ms", {}) if isinstance(telemetry, Mapping) else {},
@@ -404,6 +714,47 @@ def _memory_summary(
     total_history_tokens = sum(
         int(pack.get("full_history_token_estimate", 0) or 0) for pack in packs if isinstance(pack, Mapping)
     )
+    # Aggregate the per-pack retrieval traces into one pipeline view so the
+    # console can render full history -> candidates -> ranking -> dedupe ->
+    # ContextPack -> awakening instead of only the finished packs.
+    traces = [
+        pack.get("selection_trace") for pack in packs
+        if isinstance(pack, Mapping) and isinstance(pack.get("selection_trace"), Mapping)
+    ]
+    stale_records = [
+        item for item in memory_records
+        if str(item.get("verification_status", "")).upper() in {"STALE", "REJECTED"}
+    ]
+    pipeline = {
+        "sample_count": len(traces),
+        "stages": list(traces[-1].get("pipeline", ())) if traces else [],
+        "totals": {
+            "full_history_records": sum(
+                int((t.get("full_history") or {}).get("record_count", 0) or 0) for t in traces
+            ),
+            "raw_candidates": sum(int(t.get("raw_candidate_count", 0) or 0) for t in traces),
+            "deduplicated_candidates": sum(int(t.get("deduplicated_candidate_count", 0) or 0) for t in traces),
+            "filtered_out": sum(int(t.get("filtered_out_count", 0) or 0) for t in traces),
+            "forced_core": sum(int(t.get("forced_count", 0) or 0) for t in traces),
+            "selected": sum(int(t.get("selected_count", 0) or 0) for t in traces),
+        },
+        "ranking_formula": traces[-1].get("ranking_formula") if traces else None,
+        "stale_records": [
+            {
+                "memory_id": item.get("memory_id"),
+                "summary": str(item.get("summary") or item.get("content") or "")[:160],
+                "verification_status": item.get("verification_status"),
+                "node_id": item.get("node_id"),
+            }
+            for item in stale_records[:40]
+        ],
+        "stale_record_count": len(stale_records),
+        "rule": (
+            "each ContextPack carries its own selection_trace; totals sum across packs, so a memory "
+            "recalled by several nodes is counted once per pack, not once per run"
+        ),
+    }
+
     metric_copy = dict(metrics)
     metric_samples = {
         "key_memory_recall_rate": int(metric_copy.get("recall_expected", 0) or 0),
@@ -426,6 +777,7 @@ def _memory_summary(
         "token_measurement_semantics": "ESTIMATED_CHARACTER_HEURISTIC",
         "token_estimator": "memory_recovery.context_builder.estimate_tokens: max(1, (len(text)+1)//2)",
         "measured_api_token_source": "authenticity.api_usage / communication.token_usage only",
+        "pipeline": pipeline,
         "context_packs": dict(context_packs),
     }
 
@@ -471,7 +823,7 @@ def _lineage() -> list[dict[str, str]]:
         ("Assignment total cost", "scheduler.assignments[].total_cost", "CostModel.evaluate", "direct committed Assignment.total_cost"),
         ("Assignment cost breakdown", "scheduler.assignments[].cost_breakdown.*", "CostModel.evaluate", "direct component values; UI does not rescale"),
         ("Scheduler policy counts", "scheduler.policy_counts", "committed assignments[].policy", "Counter(policy); candidate_uncommitted values are never exposed as final assignments"),
-        ("Solver provenance", "scheduler.assignments[].solver_provenance", "Scheduler", "OR-Tools assignments require engine=ortools...SimpleMinCostFlow and status=OPTIMAL; built-in policies identify mosaic_builtin"),
+        ("Solver provenance", "scheduler.assignments[].solver_provenance", "Scheduler", "OR-Tools assignments require an engine under the ortools.* namespace (CP-SAT joint assignment) and OPTIMAL/FEASIBLE status; built-in policies identify mosaic_builtin"),
         ("Agent online", "scheduler.capabilities[].online", "CapabilityRegistry", "registry.register/heartbeat/offline; timestamp in metadata.status_updated_at"),
         ("Agent endpoint host", "scheduler.capabilities[].metadata.endpoint_host", "bound execution adapter", "direct adapter endpoint host; competition strict requires official_endpoint_verified=true"),
         ("Official endpoint verification", "scheduler.capabilities[].metadata.official_endpoint_verified", "bound execution adapter", "true only when adapter uses approved real network transport and official provider endpoint"),
@@ -531,6 +883,8 @@ def build_dashboard_snapshot(
     topology_snapshot: Mapping[str, Any],
     topology_telemetry: Mapping[str, Any],
     metric_snapshot: Mapping[str, Any],
+    topology_history: Sequence[Mapping[str, Any]] = (),
+    scheduling_rounds: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     task_dicts = [_as_dict(task) for task in tasks]
     event_dicts = [_as_dict(event) for event in events]
@@ -555,6 +909,15 @@ def build_dashboard_snapshot(
     else:
         run_status = "CREATED"
 
+    # Scheduling lifecycle inputs, resolved once for every node below.
+    round_records = list(scheduling_rounds) or _scheduling_rounds(event_dicts)
+    task_diagnostics = _latest_task_scheduling(round_records)
+    task_states = {_task_id(task): _status(task) for task in task_dicts}
+    reassigning_ids = {
+        _event_task_id(event) for event in event_dicts
+        if _event_type(event) in {"TASK_RECOVERED", "TASK_REPLANNED"} and _event_task_id(event)
+    }
+
     graph_nodes: list[dict[str, Any]] = []
     graph_edges: list[dict[str, str]] = []
     assignments: list[dict[str, Any]] = []
@@ -563,12 +926,27 @@ def build_dashboard_snapshot(
         node_id = _task_id(task)
         status = _status(task)
         assignment = task.get("assignment") if isinstance(task.get("assignment"), Mapping) else None
+        diagnostic = task_diagnostics.get(node_id)
+        scheduling = _scheduling_state(
+            task,
+            task_states=task_states,
+            diagnostic=diagnostic,
+            # A task that was recovered/replanned and is now waiting again is
+            # genuinely being reassigned, not merely idle.
+            reassigning=node_id in reassigning_ids and status in {"READY", "PLANNED"},
+        )
         graph_nodes.append({
             "id": node_id,
             "label": task.get("description") or node_id,
             "type": task.get("type", task.get("task_type", "general")),
             "status": status,
             "status_provenance": _state_provenance(node_id, status, event_dicts),
+            "scheduling_state": scheduling["state"],
+            "scheduling": scheduling,
+            "candidates": (diagnostic or {}).get("candidates", []),
+            "eliminated_candidates": (diagnostic or {}).get("rejected", []),
+            "elimination_summary": (diagnostic or {}).get("rejection_summary", {}),
+            "standby_candidates": (diagnostic or {}).get("standby", []),
             "risk": task.get("risk", "normal"),
             "priority": task.get("priority", 5),
             "assignment": dict(assignment) if assignment else None,
@@ -628,6 +1006,23 @@ def build_dashboard_snapshot(
                 "source": "ToolRuntime evidence creation; no TASK_VERIFIED event found",
             }
 
+    task_durations = {
+        _event_task_id(event): float((_payload(event).get("timings_ms") or {}).get("total_ms", 0.0) or 0.0)
+        for event in event_dicts
+        if _event_type(event) == "TASK_PHASE_TIMING" and _event_task_id(event)
+    }
+    graph_levels = _graph_layers(graph_nodes, graph_edges)
+    critical_path = _critical_path(graph_nodes, graph_edges, task_durations or {
+        # Without measured timings, fall back to unit weights so the path is still
+        # the structurally longest chain rather than nothing.
+        str(node["id"]): 1.0 for node in graph_nodes
+    })
+    critical_set = set(critical_path)
+    for node in graph_nodes:
+        node["level"] = graph_levels.get(node["id"], 0)
+        node["on_critical_path"] = node["id"] in critical_set
+        node["duration_ms"] = task_durations.get(node["id"])
+
     recovery_events = _recovery_events(event_dicts)
     affected_nodes: set[str] = set()
     for event in recovery_events:
@@ -639,6 +1034,21 @@ def build_dashboard_snapshot(
     topology.setdefault("nodes", [])
     topology.setdefault("edges", [])
     topology["telemetry"] = dict(topology_telemetry)
+    # Full version history so the console can replay v1 -> v2 -> node failure ->
+    # edge removal -> alternate route -> restored connectivity.  The runtime kept
+    # this history internally but never published it, so only the final graph was
+    # ever visible.
+    history = [dict(item) for item in topology_history]
+    topology["history"] = history
+    topology["version_count"] = len({item.get("version") for item in history if item.get("version") is not None})
+    topology["rebuild_events"] = [
+        _payload(event) | {
+            "event_id": event.get("event_id"),
+            "timestamp": event.get("timestamp", event.get("occurred_at")),
+        }
+        for event in event_dicts
+        if _event_type(event) == "TOPOLOGY_REBUILT"
+    ]
 
     run_metadata = _run_metadata(event_dicts)
     auth = _authenticity(assignments, capability_dicts, event_dicts, run_metadata)
@@ -654,8 +1064,8 @@ def build_dashboard_snapshot(
     ortools_assignments = [item for item in assignments if item.get("policy") == "ortools"]
     ortools_provenance_ok = bool(ortools_assignments) and all(
         isinstance(item.get("solver_provenance"), Mapping)
-        and str(item["solver_provenance"].get("engine", "")).startswith("ortools.graph.python.min_cost_flow")
-        and item["solver_provenance"].get("status") == "OPTIMAL"
+        and str(item["solver_provenance"].get("engine", "")).startswith("ortools.")
+        and item["solver_provenance"].get("status") in {"OPTIMAL", "FEASIBLE"}
         for item in ortools_assignments
     )
     solver_integrity = {
@@ -666,7 +1076,7 @@ def build_dashboard_snapshot(
         ),
         "ortools_assignment_count": len(ortools_assignments),
         "ortools_provenance_verified": ortools_provenance_ok,
-        "rule": "policy=ortools is trusted only with SimpleMinCostFlow provenance and OPTIMAL status",
+        "rule": "policy=ortools is trusted only with ortools.* solver provenance and OPTIMAL/FEASIBLE status",
     }
 
     generated_at = time.time()
@@ -717,7 +1127,44 @@ def build_dashboard_snapshot(
             "message_count": len(messages),
             "active_agent_count": len(active_agents),
         },
-        "task_graph": {"nodes": graph_nodes, "edges": graph_edges, "status_counts": dict(status_counts)},
+        "task_graph": {
+            "nodes": graph_nodes,
+            "edges": graph_edges,
+            "levels": graph_levels,
+            "layer_count": (max(graph_levels.values()) + 1) if graph_levels else 0,
+            "critical_path": critical_path,
+            "critical_path_source": (
+                "longest path weighted by measured TASK_PHASE_TIMING total_ms"
+                if task_durations else "longest path by node count; no timing measured yet"
+            ),
+            "status_counts": dict(status_counts),
+            "scheduling_state_counts": dict(
+                Counter(node["scheduling_state"] for node in graph_nodes)
+            ),
+            "scheduling_state_vocabulary": list(SCHEDULING_STATES),
+        },
+        "scheduling": {
+            "rounds": round_records,
+            "round_count": len(round_records),
+            "latest_round": round_records[-1] if round_records else None,
+            "task_states": {
+                node["id"]: node["scheduling"] for node in graph_nodes
+            },
+            "blocked_task_ids": [n["id"] for n in graph_nodes if n["scheduling_state"] == "BLOCKED"],
+            "queued_task_ids": [n["id"] for n in graph_nodes if n["scheduling_state"] == "QUEUED"],
+            "infeasible_task_ids": [
+                n["id"] for n in graph_nodes if n["scheduling_state"] == "NO_FEASIBLE_AGENT"
+            ],
+            "reassigning_task_ids": [
+                n["id"] for n in graph_nodes if n["scheduling_state"] == "REASSIGNING"
+            ],
+            "rule": (
+                "BLOCKED means unmet dependencies; QUEUED means feasible candidates exist but no Agent or "
+                "resource slot was free this round; NO_FEASIBLE_AGENT means every candidate was eliminated "
+                "by a hard constraint. These are never collapsed into a single unassigned label."
+            ),
+        },
+        "performance": _phase_timing_summary(event_dicts),
         "tasks": task_dicts,
         "topology": topology,
         "communication": communication_summary,

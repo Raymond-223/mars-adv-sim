@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import subprocess
 import sys
 import time
@@ -69,7 +68,19 @@ class LocalToolExecutor:
                 path = self._path(call.arguments["path"])
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(str(call.arguments["content"]), encoding="utf-8")
-                return ExecutionResult(call.call_id, True, f"wrote {path.name}", started_at=started, finished_at=time.time())
+                # A written file is a deliverable. Reporting it here is what lets
+                # evidence hashing, the artifact browser and the ``artifact_exists``
+                # verifier predicate all see the same produced file.
+                relative = path.relative_to(self.workspace).as_posix()
+                return ExecutionResult(
+                    call.call_id, True, f"wrote {path.name}",
+                    started_at=started, finished_at=time.time(),
+                    metadata={
+                        "execution_semantics": "concrete_file_write",
+                        "deliverable_relative": relative,
+                        "deliverable_bytes": path.stat().st_size,
+                    },
+                )
             if call.tool_name == "build":
                 command = call.arguments.get("command", [sys.executable, "-m", "compileall", "-q", "."])
             elif call.tool_name == "test":

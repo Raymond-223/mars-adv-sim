@@ -25,8 +25,19 @@ class _DeepSeekStubHandler(BaseHTTPRequestHandler):
             for item in messages if isinstance(item, dict)
         )
         if is_verifier:
+            # One batched judgment request per task: answer every supplied id.
+            conditions = json.loads(messages[-1]["content"])["acceptance_conditions"]
             content = json.dumps(
-                {"passed": True, "rationale": "stub independently verified the persisted deliverable"},
+                {
+                    "judgments": [
+                        {
+                            "id": item["id"],
+                            "passed": True,
+                            "rationale": "stub independently verified the persisted deliverable",
+                        }
+                        for item in conditions
+                    ]
+                },
                 ensure_ascii=False,
             )
         elif body.get("response_format") == {"type": "json_object"}:
@@ -117,16 +128,21 @@ def test_real_openai_compatible_http_path_for_goal_and_agents(tmp_path, monkeypa
         int(item["payload"]["verification"].get("metadata", {}).get("semantic_check_count", 0))
         for item in verification_events
     )
-    assert _DeepSeekStubHandler.request_count == len(tool_events) + 1 + semantic_checks
+    # Device-tier deterministic Agents execute without a provider round trip, so
+    # the HTTP request budget counts only the provider-backed tool events.
+    provider_tool_events = [
+        item for item in tool_events
+        if item["payload"]["tool_call"]["arguments"]["api_provenance"].get("transport") != "local_process"
+    ]
+    assert _DeepSeekStubHandler.request_count == len(provider_tool_events) + 1 + semantic_checks
     assert all(
         item["payload"]["tool_call"]["arguments"]["api_provenance"]["request_id"]
-        for item in tool_events
+        for item in provider_tool_events
     )
 
     # A localhost-compatible endpoint proves the HTTP path but must never be
     # presented to competition judges as an official DeepSeek production run.
-    snapshot = json.loads(
-        (tmp_path / "workspace" / "observability" / "latest.json").read_text(encoding="utf-8")
-    )
+    from mosaic_omega.observability.snapshots import SnapshotStore
+    snapshot = SnapshotStore(tmp_path / "workspace" / "observability").read_latest()
     assert snapshot["authenticity"]["verdict"] == "API_TEST_ENDPOINT_NOT_COMPETITION_STRICT"
     assert snapshot["authenticity"]["competition_strict_real_agent"] is False

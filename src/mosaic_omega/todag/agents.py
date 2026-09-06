@@ -6,7 +6,6 @@ These stages are not runtime execution Agents and must never be presented as suc
 from __future__ import annotations
 
 import hashlib
-import re
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
@@ -65,6 +64,31 @@ class DecompositionAgent:
         "plan": ("plan", "decompose", "scope", "requirement", "规划", "拆分", "需求", "范围"),
     }
 
+    #: Which delivery kind each primary skill implies, and the ToolRuntime
+    #: permissions that kind needs.  This is what turns "Agent writes prose about
+    #: fixing the build" into "Agent reads, patches, builds and tests".
+    _DELIVERY_BY_SKILL: dict[str, str] = {
+        "code": "software",
+        "robotics": "robotics",
+        "data": "data",
+        "calculation": "data",
+        "search": "research",
+        "report": "document",
+        "review": "verification",
+        "plan": "reasoning",
+        "analysis": "research",
+    }
+
+    DELIVERY_PERMISSIONS: dict[str, tuple[str, ...]] = {
+        "document": ("file.write",),
+        "software": ("file.read", "file.write", "shell.execute", "build.execute", "test.execute"),
+        "data": ("file.read", "file.write", "shell.execute"),
+        "research": ("file.write",),
+        "robotics": ("file.write", "shell.execute"),
+        "verification": ("file.read", "file.write"),
+        "reasoning": (),
+    }
+
     @classmethod
     def _skill(cls, text: str) -> str:
         folded = text.casefold()
@@ -72,6 +96,25 @@ class DecompositionAgent:
             if any(word.casefold() in folded for word in words):
                 return skill
         return "analysis"
+
+    @classmethod
+    def _delivery(cls, metadata: Mapping[str, Any], primary_skill: str, text: str) -> str:
+        declared = str(metadata.get("delivery_kind") or "").strip().casefold()
+        if declared in cls.DELIVERY_PERMISSIONS:
+            return declared
+        folded = text.casefold()
+        # An explicit artifact/build/test phrasing outranks the coarse skill map:
+        # "生成修复补丁并通过测试" is software work even when the skill guess is
+        # something softer.
+        if any(word in folded for word in ("编译", "构建", "build", "compile", "colcon", "单测", "测试", "pytest", "test")):
+            return "software"
+        if any(word in folded for word in ("补丁", "patch", "代码", "实现", "重构", "refactor", "implement")):
+            return "software"
+        if any(word in folded for word in ("数据集", "dataset", "清洗", "统计", "指标", "metric")):
+            return "data"
+        if any(word in folded for word in ("ros", "机器人", "导航", "仿真", "simulation")):
+            return "robotics"
+        return cls._DELIVERY_BY_SKILL.get(primary_skill, "reasoning")
 
     @staticmethod
     def _stable_id(prefix: str, semantic_key: str) -> str:
@@ -191,8 +234,14 @@ class DecompositionAgent:
                 privacy_local = True
         if privacy_local:
             result.setdefault("require_local_data", True)
-            result.setdefault("allowed_tiers", ["device", "edge"])
+            result.setdefault("allowed_tiers", ["device"])
             result.setdefault("data_sensitivity", "restricted")
+            # Without an explicit data location the scheduler used to reject
+            # restricted tasks outright ("restricted/secret task requires
+            # data_location"), so a goal that mentioned privacy became
+            # unschedulable.  Pin it to the DEVICE tier instead, which is the
+            # only pool allowed to hold restricted data.
+            result.setdefault("data_location", "device")
         return result
 
     @staticmethod
@@ -235,11 +284,17 @@ class DecompositionAgent:
                 task_id=requirement_id,
                 title="Requirement baseline",
                 description=f"Freeze scope, constraints, budget, and prohibitions for: {specification.main_goal_text}",
-                required_skill="plan",
-                required_skills=["plan"],
+                # A dedicated capability, because freezing an already-validated
+                # GoalSpec is a deterministic compilation step.  Routing it
+                # through a generic ``plan`` Agent spent a full provider round
+                # trip restating what the compiler had just produced.
+                required_skill="requirement_baseline",
+                required_skills=["requirement_baseline"],
                 agent_role="requirement_compiler_role",
                 node_type="milestone",
                 semantic_key="requirement_baseline",
+                delivery_kind="document",
+                required_permissions=list(DecompositionAgent.DELIVERY_PERMISSIONS["document"]),
                 depends_on=[],
                 priority=10,
                 inputs=[{"source": "GoalSpec", "fields": list(specification.to_dict())}],
@@ -317,6 +372,7 @@ class DecompositionAgent:
             elif work_source == "acceptance_conditions":
                 source_refs = self._source_refs(item, work_source, index)
 
+            delivery_kind = self._delivery(metadata, primary_skill, f"{text} {metadata.get('description', '')}")
             nodes[task_id] = DAGNode(
                 task_id=task_id,
                 title=str(metadata.get("title") or text[:80]),
@@ -326,6 +382,8 @@ class DecompositionAgent:
                 agent_role=str(metadata.get("agent_role") or "execution_role_hint"),
                 node_type=str(metadata.get("node_type") or "work"),
                 semantic_key=semantic_key,
+                delivery_kind=delivery_kind,
+                required_permissions=list(self.DELIVERY_PERMISSIONS[delivery_kind]),
                 depends_on=[requirement_id],
                 dependency_types={requirement_id: "data"},
                 priority=int(metadata.get("priority", max(5, 9 - min(index, 4)))),
@@ -408,6 +466,8 @@ class DecompositionAgent:
                 agent_role=str(metadata.get("verifier_role") or "validation_role_hint"),
                 node_type="verification",
                 semantic_key=semantic_key,
+                delivery_kind="verification",
+                required_permissions=list(DecompositionAgent.DELIVERY_PERMISSIONS["verification"]),
                 depends_on=list(dict.fromkeys(target_ids)),
                 dependency_types={parent: "evidence" for parent in target_ids},
                 evidence_dependencies=list(dict.fromkeys(target_ids)),
@@ -453,6 +513,8 @@ class DecompositionAgent:
             agent_role="validation_role_hint",
             node_type="milestone",
             semantic_key="final_integration",
+            delivery_kind="document",
+            required_permissions=list(DecompositionAgent.DELIVERY_PERMISSIONS["document"]),
             depends_on=list(final_dependencies),
             dependency_types={parent: "evidence" for parent in final_dependencies},
             evidence_dependencies=list(final_dependencies),

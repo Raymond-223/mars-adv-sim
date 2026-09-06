@@ -1,8 +1,8 @@
 """Observability facade attached to the authoritative main chain."""
 from __future__ import annotations
 
-from pathlib import Path
 import time
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .logging import JsonEventLogger
@@ -74,6 +74,8 @@ class ObservabilityRuntime:
         memory_metrics: Mapping[str, Any],
         topology_snapshot: Mapping[str, Any],
         topology_telemetry: Mapping[str, Any],
+        topology_history: Sequence[Mapping[str, Any]] = (),
+        scheduling_rounds: Sequence[Mapping[str, Any]] = (),
     ) -> dict[str, Any]:
         if self._active_run_id != run_id:
             self._active_run_id = run_id
@@ -99,6 +101,8 @@ class ObservabilityRuntime:
             memory_metrics=memory_metrics,
             topology_snapshot=topology_snapshot,
             topology_telemetry=topology_telemetry,
+            topology_history=topology_history,
+            scheduling_rounds=scheduling_rounds,
             metric_snapshot=self.metrics.snapshot(),
         )
         self.snapshots.write(run_id, snapshot)

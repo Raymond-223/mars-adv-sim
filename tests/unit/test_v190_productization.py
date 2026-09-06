@@ -57,12 +57,12 @@ def test_persisted_capability_never_suppresses_new_process_adapter_binding(tmp_p
 
     first = MosaicMainChain(workspace=workspace, scheduler_policy="greedy")
     first.register_default_deepseek_resources(["analysis"])
-    assert "agent-deepseek-analysis" in first.execution.agents
+    assert "agent-deepseek-analysis-01" in first.execution.agents
 
     second = MosaicMainChain(workspace=workspace, scheduler_policy="greedy")
     # The capability now already exists in SQLite. v1.9 must still bind the
     # adapter in the fresh process-local execution.agents map.
-    assert second.execution.capabilities.get("agent-deepseek-analysis") is not None
-    assert "agent-deepseek-analysis" not in second.execution.agents
+    assert second.execution.capabilities.get("agent-deepseek-analysis-01") is not None
+    assert "agent-deepseek-analysis-01" not in second.execution.agents
     second.register_default_deepseek_resources(["analysis"])
-    assert "agent-deepseek-analysis" in second.execution.agents
+    assert "agent-deepseek-analysis-01" in second.execution.agents

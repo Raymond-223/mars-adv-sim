@@ -13,7 +13,6 @@ from .agents import DAGValidationAgent, DecompositionAgent, IncrementalRecompute
 from .graph import critical_path, edges, graph_levels, ready_task_ids, rolling_window
 from .models import DAGNode, LongTaskInput
 
-
 EDITABLE_NODE_FIELDS = frozenset(
     {
         "title",
@@ -22,6 +21,8 @@ EDITABLE_NODE_FIELDS = frozenset(
         "required_skills",
         "agent_role",
         "node_type",
+        "delivery_kind",
+        "required_permissions",
         "depends_on",
         "dependency_types",
         "evidence_dependencies",
@@ -577,12 +578,18 @@ class ToDAGEngine:
                     "depends_on": list(node["depends_on"]),
                     "priority": node["priority"],
                     "placement": placement,
+                    # Execution needs both of these at the boundary: the delivery
+                    # kind selects the Agent's tool menu, the permissions are a
+                    # hard scheduling constraint.
+                    "delivery_kind": node["delivery_kind"],
+                    "required_permissions": list(node["required_permissions"]),
                     # Planner-only detail stays in metadata; execution state remains owned by EventStore.
                     "metadata": {
                         "todag_revision": snapshot["revision"],
                         "todag_node_version": node["version"],
                         "node_type": node["node_type"],
                         "semantic_key": node["semantic_key"],
+                        "delivery_kind": node["delivery_kind"],
                         "dependency_types": deepcopy(node["dependency_types"]),
                         "evidence_dependencies": list(node["evidence_dependencies"]),
                         "mutex_with": list(node["mutex_with"]),

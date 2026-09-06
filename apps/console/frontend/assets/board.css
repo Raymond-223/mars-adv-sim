@@ -1,0 +1,289 @@
+/* Live scheduling board.
+   Colours encode scheduling state, not decoration: every hue maps to one
+   backend-reported state so a reviewer can read the board without a legend. */
+
+.board-surface { margin-bottom: 18px; }
+
+.board-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(320px, 1.4fr) minmax(240px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1180px) { .board-grid { grid-template-columns: 1fr; } }
+
+.board-col { min-width: 0; }
+.board-col-title {
+  font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+  color: #6b7280; margin-bottom: 10px; font-weight: 600;
+}
+
+/* ------------------------------------------------------------- task cards */
+
+.board-task {
+  display: flex; flex-direction: column; gap: 3px; width: 100%;
+  text-align: left; padding: 8px 10px; margin-bottom: 6px;
+  border: 1px solid #e3e6ea; border-left: 3px solid #c8cdd4;
+  border-radius: 8px; background: #fff; cursor: pointer;
+  font: inherit; color: inherit;
+}
+.board-task:hover { border-color: #b6bcc5; background: #fbfcfd; }
+.board-task.selected { box-shadow: 0 0 0 2px rgba(39, 84, 168, .25); }
+.board-task-state { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #6b7280; }
+.board-task strong { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.board-task-agent { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #2754a8; }
+.board-task-reason { font-size: 11px; color: #6b7280; line-height: 1.4; }
+
+.board-task.blocked      { border-left-color: #9aa2ad; }
+.board-task.candidate    { border-left-color: #3f7fd8; }
+.board-task.queued       { border-left-color: #d99b28; }
+.board-task.infeasible   { border-left-color: #c0392b; background: #fdf5f4; }
+.board-task.assigned     { border-left-color: #2f8f6a; }
+.board-task.running      { border-left-color: #2754a8; }
+.board-task.verifying    { border-left-color: #7a52c9; }
+.board-task.reassigning  { border-left-color: #c0392b; }
+.board-task.succeeded    { border-left-color: #2f8f6a; opacity: .78; }
+.board-task.failed       { border-left-color: #c0392b; }
+.board-task.paused       { border-left-color: #9aa2ad; }
+
+/* ---------------------------------------------------------------- queues */
+
+.queue-block { margin-bottom: 14px; }
+.queue-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 6px; font-size: 12px; font-weight: 600;
+}
+.queue-name { color: #303640; }
+.queue-count {
+  min-width: 20px; text-align: center; padding: 1px 7px; border-radius: 10px;
+  background: #eef0f3; color: #4b5563; font-size: 11px;
+}
+.queue-block.infeasible .queue-count { background: #fbe4e1; color: #a33124; }
+.queue-block.queued .queue-count { background: #fbf0dc; color: #8a6113; }
+
+/* ------------------------------------------------------------ agent lanes */
+
+.lane-group { margin-bottom: 16px; }
+.lane-group-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding-bottom: 5px; margin-bottom: 8px; border-bottom: 1px solid #ecedf0;
+}
+.lane-group-head span { font-size: 13px; font-weight: 700; color: #232833; }
+.lane-group-head small { font-size: 11px; color: #6b7280; }
+
+.lane {
+  border: 1px solid #e6e8ec; border-radius: 10px; padding: 9px 11px;
+  margin-bottom: 8px; background: #fcfdfe;
+}
+.lane.offline { opacity: .55; background: #f7f7f8; }
+.lane-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.lane-id {
+  display: flex; align-items: center; gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #2b3240;
+}
+.lane-dot { width: 7px; height: 7px; border-radius: 50%; background: #9aa2ad; }
+.lane-dot.ok { background: #2f8f6a; }
+.lane-dot.bad { background: #c0392b; }
+
+.tier-badge {
+  font-size: 10px; letter-spacing: .08em; padding: 2px 6px; border-radius: 4px;
+  background: #eef0f3; color: #4b5563; font-weight: 600;
+}
+.tier-badge.device { background: #e6f2ec; color: #22694f; }
+.tier-badge.edge   { background: #fbf0dc; color: #8a6113; }
+.tier-badge.cloud  { background: #e7edf9; color: #2754a8; }
+
+.lane-load { display: flex; align-items: center; gap: 8px; margin: 6px 0 4px; }
+.lane-bar { flex: 1; height: 5px; border-radius: 3px; background: #eceef1; overflow: hidden; }
+.lane-bar span {
+  display: block; height: 100%; background: #2754a8;
+  transition: width .35s cubic-bezier(.22,.61,.36,1);
+}
+.lane-load small { font-size: 11px; color: #6b7280; white-space: nowrap; }
+.lane-tasks { min-height: 26px; }
+.lane-idle { font-size: 11px; color: #9aa2ad; }
+
+/* ---------------------------------------------------------------- pools */
+
+.pool { border: 1px solid #e6e8ec; border-radius: 10px; padding: 11px; margin-bottom: 10px; background: #fff; }
+.pool-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.pool-head strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.pool-rows { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+.pool-rows div { display: flex; justify-content: space-between; font-size: 11px; }
+.pool-rows span { color: #6b7280; }
+.pool-rows strong { font-weight: 600; }
+.pool-privacy, .pool-agents { margin-top: 7px; font-size: 11px; }
+.pool-privacy span, .pool-agents span { display: block; color: #6b7280; margin-bottom: 2px; }
+.pool-privacy code, .pool-agents code { font-size: 10.5px; color: #3b4250; word-break: break-word; }
+
+/* ------------------------------------------------------------- inspector */
+
+.board-inspector { font-size: 13px; }
+.inspector-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.inspector-heading h4 { margin: 0 0 2px; font-size: 15px; }
+.inspector-reason {
+  margin: 10px 0 14px; padding: 9px 11px; border-radius: 8px;
+  background: #f6f7f9; color: #414957; font-size: 12px; line-height: 1.55;
+}
+.board-two { display: grid; grid-template-columns: 1.35fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 1000px) { .board-two { grid-template-columns: 1fr; } }
+.board-sub {
+  font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  color: #6b7280; margin: 4px 0 8px; font-weight: 600;
+}
+.board-inspector .deep-table td.tiny { font-size: 10.5px; color: #6b7280; }
+.board-inspector tr.chosen { background: #eef5f1; }
+.pick { color: #22694f; font-weight: 600; font-size: 11px; }
+.standby { color: #8a6113; font-size: 11px; }
+
+.elim-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.elim-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; border-radius: 12px; background: #f6eceb;
+  color: #8a4b42; font-size: 11px;
+}
+.elim-chip strong { font-weight: 700; }
+
+.elim-list { max-height: 320px; overflow: auto; }
+.elim { padding: 7px 0; border-bottom: 1px solid #f0f1f4; }
+.elim code { font-size: 11px; color: #2b3240; }
+.elim ul { margin: 4px 0 0; padding-left: 16px; }
+.elim li { font-size: 11px; color: #8a4b42; line-height: 1.5; }
+
+/* -------------------------------------------------------- topology replay */
+
+.board-topo-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.board-topo-controls input[type=range] { flex: 1; }
+#boardTopoSvg { width: 100%; height: 380px; background: #fbfcfd; border-radius: 10px; }
+.topo-edge { stroke: #c3c9d2; }
+.topo-edge.added { stroke: #2f8f6a; stroke-width: 2.5; }
+.topo-edge.removed { stroke: #c0392b; stroke-dasharray: 4 4; opacity: .65; }
+.topo-node circle { fill: #fff; stroke: #2754a8; stroke-width: 2; }
+.topo-node.added circle { stroke: #2f8f6a; stroke-width: 3; }
+.topo-node text { font-size: 10px; fill: #4b5563; }
+.board-topo-detail { margin-top: 12px; }
+
+/* ------------------------------------------------------------------ perf */
+
+.perf-bars { margin-bottom: 16px; }
+.perf-row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+.perf-name { width: 76px; font-size: 12px; color: #414957; }
+.perf-bar { flex: 1; height: 7px; border-radius: 4px; background: #eceef1; overflow: hidden; }
+.perf-bar span { display: block; height: 100%; background: #7a52c9; }
+.perf-value { width: 170px; text-align: right; font-size: 11px; color: #6b7280; }
+
+/* ------------------------------------------------------------ dynamic DAG */
+
+.dag-wrap { position: relative; }
+.dag-controls { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.dag-controls input[type=range] { flex: 0 1 220px; }
+.dag-spacer { flex: 1; }
+.dag-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #4b5563; }
+#dagSvg {
+  width: 100%; height: 620px; background: #fbfcfd;
+  border: 1px solid #eceef1; border-radius: 10px; cursor: grab; touch-action: none;
+}
+#dagSvg.grabbing { cursor: grabbing; }
+
+.dag-level { font-size: 11px; fill: #9aa2ad; font-weight: 700; letter-spacing: .1em; }
+.dag-link { fill: none; stroke: #ccd2da; stroke-width: 1.5; }
+.dag-link.critical { stroke: #d98324; stroke-width: 2.5; }
+
+.dag-card rect { fill: #fff; stroke: #dfe3e8; stroke-width: 1.5; }
+.dag-card { cursor: pointer; }
+.dag-card:hover rect { stroke: #b6bcc5; }
+.dag-card.selected rect { stroke: #2754a8; stroke-width: 2.5; }
+.dag-card.critical rect { stroke: #d98324; }
+.dag-state { font-size: 9.5px; fill: #6b7280; letter-spacing: .04em; }
+.dag-title { font-size: 12px; fill: #232833; font-weight: 600; }
+.dag-agent { font-size: 10px; fill: #2754a8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.dag-dur { font-size: 9.5px; fill: #9aa2ad; }
+
+.dag-card.blocked rect      { fill: #f7f8f9; }
+.dag-card.candidate rect    { fill: #eef3fb; }
+.dag-card.queued rect       { fill: #fdf7ea; }
+.dag-card.infeasible rect   { fill: #fdf1ef; stroke: #c0392b; }
+.dag-card.assigned rect     { fill: #eef6f2; }
+.dag-card.running rect      { fill: #e9f0fb; stroke: #2754a8; }
+.dag-card.verifying rect    { fill: #f2eefb; }
+.dag-card.reassigning rect  { fill: #fdf1ef; stroke: #c0392b; }
+.dag-card.succeeded rect    { fill: #eef6f2; }
+.dag-card.failed rect       { fill: #fbe9e6; stroke: #c0392b; }
+
+/* Fires once when a real status change was observed between two snapshots. */
+@keyframes dag-pop { 0% { opacity: .35; } 100% { opacity: 1; } }
+.dag-card.just-changed rect { animation: dag-pop .55s ease-out; }
+
+.dag-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.dag-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
+  border-radius: 12px; background: #eef0f3; color: #4b5563; font-size: 11px;
+}
+.dag-chip.infeasible { background: #fbe4e1; color: #a33124; }
+.dag-chip.queued { background: #fbf0dc; color: #8a6113; }
+.dag-chip.succeeded { background: #e6f2ec; color: #22694f; }
+.dag-note { font-size: 11px; color: #9aa2ad; margin-left: auto; }
+
+/* ------------------------------------------------------- memory pipeline */
+
+.mem-pipeline {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px; margin-bottom: 18px;
+}
+.mem-stage { position: relative; }
+.mem-stage-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; }
+.mem-stage-head span { color: #4b5563; }
+.mem-stage-head strong { font-size: 16px; font-weight: 700; color: #232833; }
+.mem-stage-bar { height: 6px; border-radius: 3px; background: #eceef1; overflow: hidden; margin: 5px 0 4px; }
+.mem-stage-bar span { display: block; height: 100%; background: #2f8f6a; }
+.mem-stage small { font-size: 10.5px; color: #9aa2ad; line-height: 1.4; display: block; }
+.mem-arrow { display: none; }
+
+.mem-detail-grid { display: grid; grid-template-columns: minmax(240px, 1fr) 1.5fr; gap: 20px; align-items: start; }
+@media (max-width: 1000px) { .mem-detail-grid { grid-template-columns: 1fr; } }
+.mem-select { width: 100%; margin-bottom: 10px; }
+.mem-pack-summary .truth-row { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+.mem-comp { margin-top: 10px; font-size: 11px; }
+.mem-comp span { display: block; color: #6b7280; margin-top: 6px; }
+.mem-comp code { font-size: 10.5px; color: #3b4250; word-break: break-all; }
+.mem-ranked { max-height: 340px; overflow: auto; }
+.mem-ranked tr.chosen { background: #eef5f1; }
+
+.mem-dropped { margin-top: 18px; }
+.mem-drop-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
+.mem-drop-cols strong { font-size: 12px; color: #303640; }
+.mem-drop-cols ul { margin: 6px 0 0; padding-left: 16px; }
+.mem-drop-cols li { font-size: 11px; color: #6b7280; line-height: 1.5; }
+
+/* --------------------------------------------------- formulas as details */
+/* A formula explains an algorithm; it is not a headline metric. These used to
+   be the largest card in each panel, pushing the real runtime data below the
+   fold. They are now collapsed by default and rendered after the data. */
+
+.algo-details {
+  margin-top: 14px; border: 1px solid #eceef1; border-radius: 10px;
+  background: #fbfcfd; overflow: hidden;
+}
+.algo-details > summary {
+  cursor: pointer; padding: 10px 14px; font-size: 12px; font-weight: 600;
+  color: #4b5563; list-style: none; user-select: none;
+}
+.algo-details > summary::-webkit-details-marker { display: none; }
+.algo-details > summary::before { content: '▸ '; color: #9aa2ad; }
+.algo-details[open] > summary::before { content: '▾ '; }
+.algo-details > summary:hover { color: #232833; background: #f4f6f8; }
+.algo-body { padding: 0 14px 14px; }
+.algo-body .math-block {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px; color: #232833; padding: 8px 0;
+}
+.algo-body .math-block.small { font-size: 11.5px; color: #6b7280; }
+.algo-body p { font-size: 12px; color: #4b5563; line-height: 1.6; margin: 6px 0; }
+.algo-body .formula-notes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.algo-body .formula-notes span {
+  font-size: 11px; padding: 2px 8px; border-radius: 10px;
+  background: #eef0f3; color: #4b5563;
+}
+.algo-body .algorithm-chain { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11.5px; }
+.algo-body .algorithm-chain span { padding: 2px 8px; border-radius: 10px; background: #eef0f3; color: #4b5563; }
+.algo-body .algorithm-chain b { color: #9aa2ad; }

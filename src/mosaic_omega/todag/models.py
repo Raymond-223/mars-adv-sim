@@ -12,7 +12,6 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
-
 INPUT_FIELDS = (
     "main_goal",
     "hard_constraints",
@@ -39,6 +38,19 @@ NODE_STATUSES = frozenset(
 DEPENDENCY_TYPES = frozenset({"exec", "data", "evidence"})
 EDGE_TYPES = frozenset({*DEPENDENCY_TYPES, "mutex"})
 RISK_LEVELS = frozenset({"low", "medium", "high", "critical"})
+
+#: What a node is expected to hand over.  This is the contract the runtime uses
+#: to decide which real tools an Agent may plan, so that a software task can read,
+#: patch, build and test instead of only producing prose about doing so.
+DELIVERY_KINDS = frozenset({
+    "document",       # a written deliverable file
+    "software",       # read/modify/build/test source
+    "data",           # load data, run analysis, emit results
+    "research",       # evidence-backed structured findings
+    "robotics",       # drive a simulation / robot interface
+    "verification",   # inspect produced artifacts and judge them
+    "reasoning",      # no external effect; reasoning persisted as a deliverable
+})
 
 
 def _non_empty_text(value: Any, field_name: str) -> str:
@@ -320,6 +332,13 @@ class DAGNode:
     node_type: str = "task"
     semantic_key: str = ""
     required_skills: list[str] = field(default_factory=list)
+    #: What this node is expected to produce, which decides the tools its Agent
+    #: may plan (document / software / data / research / robotics / verification /
+    #: reasoning).  Without it every node fell back to persisting Agent prose.
+    delivery_kind: str = "reasoning"
+    #: ToolRuntime permissions this node needs.  The scheduler treats them as a
+    #: hard constraint, so a document Agent is never handed a build task.
+    required_permissions: list[str] = field(default_factory=list)
     inputs: list[Any] = field(default_factory=list)
     outputs: list[Any] = field(default_factory=list)
     dependency_types: dict[str, str] = field(default_factory=dict)
@@ -372,6 +391,14 @@ class DAGNode:
             self.required_skills.insert(0, self.required_skill)
         self.candidate_executors = _unique_text_list(
             self.candidate_executors, f"{self.task_id}.candidate_executors"
+        )
+        self.delivery_kind = _non_empty_text(self.delivery_kind, f"{self.task_id}.delivery_kind").lower()
+        if self.delivery_kind not in DELIVERY_KINDS:
+            raise ValueError(
+                f"{self.task_id}.delivery_kind must be one of {sorted(DELIVERY_KINDS)}"
+            )
+        self.required_permissions = _unique_text_list(
+            self.required_permissions, f"{self.task_id}.required_permissions"
         )
 
         self.inputs = list(_validate_json_value(self.inputs, f"{self.task_id}.inputs"))
@@ -451,6 +478,8 @@ class DAGNode:
             "agent_role": self.agent_role,
             "node_type": self.node_type,
             "semantic_key": self.semantic_key,
+            "delivery_kind": self.delivery_kind,
+            "required_permissions": list(self.required_permissions),
             "depends_on": list(self.depends_on),
             "dependency_types": dict(self.dependency_types),
             "evidence_dependencies": list(self.evidence_dependencies),

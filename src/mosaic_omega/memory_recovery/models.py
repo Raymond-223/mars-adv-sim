@@ -201,6 +201,11 @@ class ContextPack:
     compression_ratio: float = 0.0
     memory_ids: List[str] = field(default_factory=list)
     truncated: bool = False
+    #: How this pack was selected: candidate stages, ranking scores, the records
+    #: that were dropped and why, and what the budget removed.  Without it the
+    #: console could only display the finished pack and had no way to show the
+    #: retrieval → ranking → dedupe → compression pipeline that produced it.
+    selection_trace: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now)
 
     def to_dict(self) -> Dict[str, Any]:
